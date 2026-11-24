@@ -1,0 +1,2443 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ระบบสำรวจและติดตามปักหมุดภาษีป้ายภาคสนาม</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet CSS & JS (มีระบบสำรองอัตโนมัติหากเปิดออฟไลน์หรือถูกบล็อก) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap');
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: 'Prompt', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    /* เป้าเล็งกึ่งกลางหน้าจอสำหรับแท็บเล็ต Samsung */
+    .crosshair-overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 650;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .crosshair-ring {
+      width: 44px;
+      height: 44px;
+      border: 3px solid #ef4444;
+      border-radius: 9999px;
+      background: rgba(239, 68, 68, 0.08);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 4px 10px rgba(0, 0, 0, 0.25);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .crosshair-ring::before,
+    .crosshair-ring::after {
+      content: '';
+      position: absolute;
+      background-color: #ef4444;
+    }
+
+    .crosshair-ring::before {
+      width: 2px;
+      height: 56px;
+    }
+
+    .crosshair-ring::after {
+      width: 56px;
+      height: 2px;
+    }
+
+    .crosshair-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 9999px;
+      background-color: #dc2626;
+      border: 2px solid #ffffff;
+      z-index: 2;
+    }
+
+    /* หมุดตัวเลขลำดับบนแผนที่ Leaflet */
+    .numbered-pin-wrapper {
+      background: transparent !important;
+      border: none !important;
+    }
+
+    .numbered-pin {
+      width: 38px;
+      height: 46px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.35));
+      transition: transform 0.15s ease;
+    }
+
+    .numbered-pin:hover {
+      transform: scale(1.1);
+    }
+
+    .numbered-pin-num {
+      position: absolute;
+      top: 6px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-weight: 700;
+      font-size: 13px;
+      color: #ffffff;
+      line-height: 1;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    }
+
+    .numbered-pin-count {
+      position: absolute;
+      top: -4px;
+      right: -5px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 9999px;
+      background: #0f172a;
+      color: #fbbf24;
+      border: 1.5px solid #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* จุดตำแหน่งผู้ใช้ GPS */
+    .gps-pulse {
+      width: 20px;
+      height: 20px;
+      border-radius: 9999px;
+      background: #2563eb;
+      border: 3px solid #ffffff;
+      box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.3);
+    }
+
+    /* ปรับแต่ง Leaflet Popup */
+    .leaflet-popup-content-wrapper {
+      border-radius: 16px !important;
+      padding: 0 !important;
+      overflow: hidden;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.25) !important;
+    }
+
+    .leaflet-popup-content {
+      margin: 0 !important;
+      width: 300px !important;
+      font-family: 'Prompt', sans-serif !important;
+    }
+
+    /* พิมพ์เอกสาร ภ.ป.1 */
+    @media print {
+      body * {
+        visibility: hidden !important;
+      }
+      #print-sheet-modal,
+      #print-sheet-modal * {
+        visibility: visible !important;
+      }
+      #print-sheet-modal {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        background: #ffffff !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: visible !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- กล่องแจ้งเตือน Toast (ไม่ใช้ alert/confirm) -->
+  <div id="toast-container" class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm w-[calc(100%-2rem)] pointer-events-none"></div>
+
+  <!-- แถบนำทางหลักด้านบน -->
+  <header class="bg-slate-900 text-white shadow-lg sticky top-0 z-[1000]">
+    <div class="max-w-7xl mx-auto px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+      <!-- โลโก้และชื่อระบบ -->
+      <div class="flex items-center gap-2.5">
+        <div class="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold text-lg shadow">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21s-7-5.686-7-11a7 7 0 1114 0c0 5.314-7 11-7 11z" />
+            <circle cx="12" cy="10" r="2.5" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-sm sm:text-base font-bold leading-tight">ระบบสำรวจและติดตามปักหมุดภาษีป้ายภาคสนาม</h1>
+          <p class="text-[11px] text-slate-300">ปักหมุดเรียงเลข 1-N • คำนวณตามกฎกระทรวง พ.ศ. 2563 • รองรับคอม & แท็บเล็ต Samsung</p>
+        </div>
+      </div>
+
+      <!-- ปุ่มสลับแท็บหน้าจอ -->
+      <nav class="flex items-center gap-1.5 bg-slate-800 p-1 rounded-xl w-full sm:w-auto justify-between sm:justify-end">
+        <button type="button" onclick="switchTab('map')" id="tab-btn-map" class="tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-amber-500 text-slate-950 transition">
+          แผนที่ปักหมุด
+        </button>
+        <button type="button" onclick="switchTab('list')" id="tab-btn-list" class="tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-slate-200 hover:bg-slate-700 transition">
+          ทะเบียนป้าย (<span id="header-pin-count">0</span>)
+        </button>
+        <button type="button" onclick="switchTab('summary')" id="tab-btn-summary" class="tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-slate-200 hover:bg-slate-700 transition">
+          สรุปภาษี
+        </button>
+        <button type="button" onclick="switchTab('transfer')" id="tab-btn-transfer" class="tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-slate-200 hover:bg-slate-700 transition">
+          โอนไฟล์/สำรอง
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- แถบสถานะการติดตามเส้นทางไปยังหมุดเป้าหมาย (แสดงเมื่อกดติดตามหมุด) -->
+  <div id="tracking-banner" class="hidden bg-emerald-700 text-white px-4 py-2.5 shadow-md z-[950]">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2.5 text-xs sm:text-sm">
+        <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-white text-emerald-800 font-bold" id="track-pin-no">1</span>
+        <div>
+          <span class="font-semibold">กำลังติดตามไปที่: </span>
+          <span id="track-shop-name" class="font-bold underline">ชื่อร้าน</span>
+          <span class="mx-1.5 opacity-75">|</span>
+          <span id="track-distance" class="bg-emerald-900/70 px-2 py-0.5 rounded-md font-mono font-bold">กำลังค้นหาสัญญาณ GPS...</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <a id="track-gmaps-link" href="#" target="_blank" rel="noopener" class="px-3 py-1.5 rounded-lg bg-white text-emerald-900 font-semibold text-xs hover:bg-emerald-50 transition">
+          เปิด Google Maps นำทาง
+        </a>
+        <button type="button" onclick="stopTracking()" class="px-3 py-1.5 rounded-lg bg-emerald-900 text-white text-xs font-medium hover:bg-emerald-950 transition">
+          หยุดติดตาม
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- แท็บ 1: แผนที่ปักหมุดและสำรวจภาคสนาม -->
+  <!-- ===================================================================== -->
+  <main id="view-map" class="flex-1 flex flex-col lg:flex-row relative">
+    <!-- พื้นที่แผนที่หลัก -->
+    <div class="relative flex-1 h-[62vh] lg:h-[calc(100vh-64px)] bg-slate-200 overflow-hidden">
+      <!-- แผนที่ Leaflet -->
+      <div id="leaflet-map" class="w-full h-full z-10"></div>
+
+      <!-- แผนที่สำรองแบบ Interactive Grid (ทำงานอัตโนมัติหากเปิดออฟไลน์หรือ CDN แผนที่ถูกบล็อก) -->
+      <div id="fallback-map" class="hidden w-full h-full relative bg-slate-100 select-none overflow-hidden">
+        <div class="absolute inset-0 opacity-40" style="background-image: linear-gradient(#cbd5e1 1px, transparent 1px), linear-gradient(90deg, #cbd5e1 1px, transparent 1px); background-size: 36px 36px;"></div>
+        <div class="absolute top-16 left-3 right-3 sm:right-auto bg-amber-50 border border-amber-300 text-amber-900 px-3 py-2 rounded-xl text-xs shadow z-20 max-w-md">
+          <strong>โหมดแผนที่ออฟไลน์/สำรอง:</strong> ไม่สามารถเชื่อมต่อแผนที่ออนไลน์ได้ในขณะนี้ แต่คุณยังปักหมุด ลงข้อมูล ถ่ายรูป คำนวณภาษี และสำรองไฟล์ JSON ได้ครบ 100%
+        </div>
+        <div id="fallback-pins-layer" class="absolute inset-0 z-10"></div>
+      </div>
+
+      <!-- เป้าเล็งกึ่งกลางหน้าจอ (+) -->
+      <div class="crosshair-overlay" title="เลื่อนแผนที่ให้ตรงจุดแล้วกดปุ่มปักหมุดตรงเป้ากลางจอ">
+        <div class="crosshair-ring">
+          <div class="crosshair-dot"></div>
+        </div>
+        <span id="center-coord-label" class="mt-1.5 px-2 py-0.5 rounded bg-slate-900/80 text-white text-[10px] font-mono shadow">
+          13.38500, 101.34500
+        </span>
+      </div>
+
+      <!-- แถบเครื่องมือด้านบนของแผนที่ -->
+      <div class="absolute top-3 left-3 right-3 z-[700] flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+        <!-- ปุ่มสลับแผนที่ถนน / ดาวเทียม -->
+        <div class="flex items-center gap-1.5 bg-white/95 backdrop-blur p-1 rounded-xl shadow-md border border-slate-200 pointer-events-auto">
+          <button type="button" onclick="setMapLayer('street')" id="layer-btn-street" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition">
+            แผนที่ถนน
+          </button>
+          <button type="button" onclick="setMapLayer('satellite')" id="layer-btn-satellite" class="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition">
+            ดาวเทียม
+          </button>
+        </div>
+
+        <!-- ปุ่มกรอกพิกัด / วางลิงก์ Google Maps -->
+        <div class="flex items-center gap-1.5 pointer-events-auto">
+          <button type="button" onclick="openCoordModal()" class="px-3 py-2 rounded-xl bg-white/95 backdrop-blur text-slate-800 text-xs font-semibold shadow-md border border-slate-200 hover:bg-slate-50 flex items-center gap-1.5">
+            <span>ใส่พิกัด / วางลิงก์ Maps</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- แถบปุ่มปฏิบัติการด้านล่างของแผนที่ (ออกแบบปุ่มใหญ่สำหรับแท็บเล็ต Samsung) -->
+      <div class="absolute bottom-4 left-3 right-3 z-[700] flex flex-wrap items-center justify-center sm:justify-between gap-2 pointer-events-none">
+        <div class="flex flex-wrap items-center justify-center gap-2 pointer-events-auto">
+          <!-- ปุ่มหลัก: ปักหมุดตรงเป้ากลางจอ (+) -->
+          <button type="button" onclick="pinAtCenter()" class="px-4 py-3 rounded-2xl bg-red-600 hover:bg-red-700 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-red-600/30 flex items-center gap-2 transition">
+            <span class="w-5 h-5 rounded-full bg-white text-red-600 flex items-center justify-center font-extrabold text-sm">+</span>
+            <span>ปักหมุดตรงเป้ากลางจอ (+)</span>
+          </button>
+
+          <!-- ปุ่มปักหมุดตำแหน่ง GPS ปัจจุบัน -->
+          <button type="button" onclick="pinAtCurrentGPS()" class="px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-600/30 flex items-center gap-2 transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3" />
+              <path stroke-linecap="round" d="M12 2v3m0 14v3M2 12h3m14 0h3" />
+            </svg>
+            <span>ปักหมุด GPS จุดที่ยืน</span>
+          </button>
+        </div>
+
+        <!-- ปุ่มค้นหาตำแหน่งฉัน -->
+        <button type="button" onclick="locateUser(true)" class="pointer-events-auto px-3.5 py-3 rounded-2xl bg-white hover:bg-slate-50 active:scale-95 text-slate-800 font-semibold text-xs shadow-lg border border-slate-200 flex items-center gap-1.5 transition" title="เลื่อนแผนที่มาที่ตำแหน่งปัจจุบันของคุณ">
+          <span class="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block"></span>
+          <span>ตำแหน่งฉัน</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- แผงรายการหมุดด้านข้างสำหรับวิ่งสำรวจตามลำดับ 1, 2, 3... -->
+    <aside class="w-full lg:w-[410px] bg-white border-t lg:border-t-0 lg:border-l border-slate-200 flex flex-col lg:h-[calc(100vh-64px)]">
+      <!-- หัวแผงรายการและตัวกรอง -->
+      <div class="p-3.5 border-b border-slate-200 bg-slate-50 space-y-2.5">
+        <div class="flex items-center justify-between gap-2">
+          <div>
+            <h2 class="text-sm font-bold text-slate-900">ลำดับจุดสำรวจ (<span id="sidebar-count">0</span> หมุด)</h2>
+            <p class="text-[11px] text-slate-500">กดที่รายการเพื่อดูพิกัด นำทาง หรือเพิ่มป้ายใหม่หน้างาน</p>
+          </div>
+          <button type="button" onclick="renumberPins()" class="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 text-[11px] font-semibold transition" title="จัดเรียงเลขลำดับหมุดใหม่เป็น 1, 2, 3...">
+            เรียงเลขหมุดใหม่ (1-N)
+          </button>
+        </div>
+
+        <!-- ช่องค้นหาและกรองหมู่ที่ / สถานะ -->
+        <div class="grid grid-cols-12 gap-1.5">
+          <input type="text" id="search-input" oninput="renderAll()" placeholder="ค้นหาเลขหมุด / ชื่อร้าน / เจ้าของ..." class="col-span-6 px-2.5 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          <select id="filter-moo" onchange="renderAll()" class="col-span-3 px-2 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <option value="">ทุกหมู่</option>
+          </select>
+          <select id="filter-status" onchange="renderAll()" class="col-span-3 px-2 py-2 rounded-xl border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <option value="">ทุกสถานะ</option>
+            <option value="รอสำรวจ">รอสำรวจ</option>
+            <option value="ยื่นแบบ ภ.ป.1 แล้ว">ยื่น ภ.ป.1</option>
+            <option value="ชำระแล้ว">ชำระแล้ว</option>
+            <option value="พบป้ายใหม่">พบป้ายใหม่</option>
+            <option value="รื้อถอน/ยกเลิก">รื้อถอน</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- รายการหมุดเลื่อนขึ้นลงได้ -->
+      <div id="sidebar-pin-list" class="flex-1 overflow-y-auto p-3 space-y-2.5"></div>
+    </aside>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- แท็บ 2: ทะเบียนป้ายทั้งหมด (ตารางจัดการและพิมพ์ใบสรุป ภ.ป.1) -->
+  <!-- ===================================================================== -->
+  <section id="view-list" class="hidden flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 py-5 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+      <div>
+        <h2 class="text-base sm:text-lg font-bold text-slate-900">ทะเบียนข้อมูลป้ายและพิกัดทั้งหมด</h2>
+        <p class="text-xs text-slate-500">แสดงรายการเรียงตามหมายเลขหมุด (1, 2, 3...) พร้อมรายละเอียดป้ายแต่ละแผ่นและหมายเหตุ</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="button" onclick="openPinModal(null)" class="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold shadow-sm transition">
+          + เพิ่มหมุด/ร้านค้าใหม่
+        </button>
+        <button type="button" onclick="exportCSV()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition">
+          ส่งออก Excel (.CSV)
+        </button>
+      </div>
+    </div>
+
+    <div id="full-register-list" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- แท็บ 3: สรุปยอดจัดเก็บภาษีป้ายตามกฎกระทรวง พ.ศ. 2563 -->
+  <!-- ===================================================================== -->
+  <section id="view-summary" class="hidden flex-1 max-w-7xl w-full mx-auto px-3 sm:px-5 py-5 space-y-5">
+    <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-200">
+      <h2 class="text-base sm:text-lg font-bold text-slate-900">สรุปยอดประเมินภาษีป้าย (ตามกฎกระทรวง กำหนดอัตราภาษีป้าย พ.ศ. 2563)</h2>
+      <p class="text-xs text-slate-500 mt-0.5">คำนวณพื้นที่ กว้าง × ยาว (ตร.ซม.) หาร 500 ปัดเศษขึ้น คูณอัตราตามประเภทป้ายและงวดไตรมาส (ขั้นต่ำ 200 บาท/ป้าย)</p>
+
+      <!-- การ์ดตัวเลขสรุป 4 ช่อง -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+        <div class="p-4 rounded-2xl bg-slate-900 text-white">
+          <div class="text-xs text-slate-300">จำนวนจุด/ร้านค้าที่ปักหมุด</div>
+          <div class="text-2xl font-bold mt-1" id="stat-total-pins">0</div>
+          <div class="text-[11px] text-amber-400 mt-1">เรียงลำดับ 1 ถึง <span id="stat-max-pin">0</span></div>
+        </div>
+        <div class="p-4 rounded-2xl bg-blue-50 border border-blue-200">
+          <div class="text-xs text-blue-800 font-medium">จำนวนป้ายที่ใช้งานทั้งหมด</div>
+          <div class="text-2xl font-bold text-blue-950 mt-1" id="stat-active-signs">0</div>
+          <div class="text-[11px] text-blue-700 mt-1">ป้ายใหม่ติดเพิ่ม: <span id="stat-new-signs" class="font-bold">0</span> ป้าย</div>
+        </div>
+        <div class="p-4 rounded-2xl bg-emerald-50 border border-emerald-200">
+          <div class="text-xs text-emerald-800 font-medium">รวมภาษีป้ายประเมินทั้งหมด</div>
+          <div class="text-2xl font-bold text-emerald-950 mt-1"><span id="stat-total-tax">0</span> <span class="text-sm font-normal">บาท</span></div>
+          <div class="text-[11px] text-emerald-700 mt-1">ไม่รวมป้ายที่รื้อถอน/ยกเลิก</div>
+        </div>
+        <div class="p-4 rounded-2xl bg-amber-50 border border-amber-200">
+          <div class="text-xs text-amber-900 font-medium">สำรวจแล้ว / ชำระแล้ว</div>
+          <div class="text-2xl font-bold text-amber-950 mt-1" id="stat-completed-pins">0</div>
+          <div class="text-[11px] text-amber-800 mt-1">รอลงพื้นที่สำรวจ: <span id="stat-pending-pins" class="font-bold">0</span> จุด</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ตารางสรุปแยกตามประเภทป้าย 1, 2, 3 -->
+    <div class="bg-white p-4 sm:p-5 rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
+      <h3 class="text-sm font-bold text-slate-900 mb-3">สรุปแยกตามประเภทป้ายและลักษณะการแสดงข้อความ</h3>
+      <table class="w-full text-left border-collapse text-xs sm:text-sm">
+        <thead>
+          <tr class="bg-slate-100 text-slate-700 border-b border-slate-200">
+            <th class="py-2.5 px-3 rounded-tl-xl">ประเภทป้าย (กฎกระทรวง พ.ศ. 2563)</th>
+            <th class="py-2.5 px-3 text-right">อัตรา/500 ตร.ซม.</th>
+            <th class="py-2.5 px-3 text-right">จำนวน (ป้าย)</th>
+            <th class="py-2.5 px-3 text-right rounded-tr-xl">รวมภาษี (บาท)</th>
+          </tr>
+        </thead>
+        <tbody id="summary-by-type-body" class="divide-y divide-slate-100"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- แท็บ 4: โอนไฟล์ระหว่างคอม <-> แท็บเล็ต Samsung & จัดการข้อมูลตัวอย่าง -->
+  <!-- ===================================================================== -->
+  <section id="view-transfer" class="hidden flex-1 max-w-4xl w-full mx-auto px-3 sm:px-5 py-5 space-y-4">
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+      <div>
+        <h2 class="text-base sm:text-lg font-bold text-slate-900">โอนย้ายข้อมูลระหว่างคอมพิวเตอร์ ↔ แท็บเล็ต Samsung</h2>
+        <p class="text-xs text-slate-600 mt-1">
+          ขั้นตอนการทำงาน: (1) ปักหมุดและใส่ข้อมูลปีก่อนในคอม → กด <strong>ส่งออกไฟล์สำรอง (.JSON)</strong> → (2) ส่งไฟล์เข้าแท็บเล็ต Samsung แล้วกด <strong>นำเข้าไฟล์ (.JSON)</strong> เพื่อขี่รถตามหมุด → (3) สำรวจเสร็จกดส่งออกกลับเข้าคอม
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <!-- ส่งออก JSON -->
+        <div class="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex flex-col justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-bold text-blue-950">1. ส่งออกข้อมูลเป็นไฟล์ (.JSON)</h3>
+            <p class="text-xs text-blue-800 mt-1">รวมหมุดพิกัด เลขลำดับ รูปถ่ายที่บีบอัดแล้ว ขนาดป้าย หมายเหตุ และยอดภาษีทั้งหมดไว้ในไฟล์เดียว</p>
+          </div>
+          <button type="button" onclick="exportJSON()" class="w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow transition">
+            ดาวน์โหลดไฟล์สำรอง (.JSON)
+          </button>
+        </div>
+
+        <!-- นำเข้า JSON -->
+        <div class="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 flex flex-col justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-bold text-emerald-950">2. นำเข้าข้อมูลจากไฟล์ (.JSON)</h3>
+            <p class="text-xs text-emerald-800 mt-1">เลือกไฟล์ .json ที่ส่งมาจากคอมหรือแท็บเล็ต เพื่อโหลดหมุดและรูปภาพทั้งหมดเข้าเครื่องนี้</p>
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm shadow text-center cursor-pointer transition">
+              เลือกไฟล์ .JSON (เขียนทับข้อมูลเดิมในเครื่อง)
+              <input type="file" accept=".json,application/json" onchange="importJSON(event, 'replace')" class="hidden" />
+            </label>
+            <label class="w-full py-2 px-3 rounded-xl bg-white hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-xs text-center cursor-pointer transition">
+              นำเข้าแบบเพิ่มต่อท้าย (Merge)
+              <input type="file" accept=".json,application/json" onchange="importJSON(event, 'merge')" class="hidden" />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ส่งออก Excel CSV -->
+      <div class="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-bold text-slate-900">ส่งออกรายงานตาราง Excel (.CSV)</h3>
+          <p class="text-xs text-slate-600">เปิดใน Microsoft Excel อ่านภาษาไทยได้ทันที แยกรายการป้ายทุกแผ่นพร้อมพิกัดและหมายเหตุ</p>
+        </div>
+        <button type="button" onclick="exportCSV()" class="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm transition">
+          ดาวน์โหลด Excel (.CSV)
+        </button>
+      </div>
+    </div>
+
+    <!-- จัดการข้อมูลตัวอย่าง / ล้างข้อมูลเพื่อเริ่มงานจริง -->
+    <div class="bg-white p-5 rounded-2xl shadow-sm border border-amber-200 space-y-3">
+      <h3 class="text-sm font-bold text-slate-900">จัดการข้อมูลตัวอย่าง & เริ่มงานจริง</h3>
+      <p class="text-xs text-slate-600">ระบบมีข้อมูลตัวอย่าง 4 หมุด (หมุดที่ 1-4) ให้ทดลองกดใช้งาน เมื่อพร้อมลงข้อมูลจริงของเทศบาล สามารถกดปุ่มล้างข้อมูลตัวอย่างด้านล่างได้ทันที</p>
+      <div class="flex flex-wrap items-center gap-2.5">
+        <button type="button" onclick="askClearAllData()" class="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition">
+          ล้างข้อมูลตัวอย่างทั้งหมด (เริ่มปักหมุดงานจริง)
+        </button>
+        <button type="button" onclick="restoreSampleData()" class="px-4 py-2.5 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-semibold transition">
+          โหลดข้อมูลตัวอย่าง 4 หมุดอีกครั้ง
+        </button>
+      </div>
+      <!-- กล่องยืนยันการล้างข้อมูลแบบในหน้า (ไม่ใช้ window.confirm) -->
+      <div id="confirm-clear-box" class="hidden p-3.5 rounded-xl bg-red-50 border border-red-300 flex flex-wrap items-center justify-between gap-2">
+        <span class="text-xs font-semibold text-red-900">ยืนยันการลบข้อมูลหมุดทั้งหมดในเครื่องนี้ใช่หรือไม่? (แนะนำให้ส่งออก .JSON เก็บไว้ก่อน)</span>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="confirmClearAllData()" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold">ยืนยัน ลบทั้งหมด</button>
+          <button type="button" onclick="cancelClearAllData()" class="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- โมดอล 1: เพิ่ม / แก้ไขข้อมูลหมุด ถ่ายรูป และรายการป้าย -->
+  <!-- ===================================================================== -->
+  <div id="pin-modal" class="hidden fixed inset-0 z-[2000] bg-slate-950/70 backdrop-blur-sm overflow-y-auto p-2 sm:p-4">
+    <div class="max-w-3xl mx-auto bg-white rounded-3xl shadow-2xl overflow-hidden my-2 sm:my-6 border border-slate-200">
+      <!-- หัวโมดอล -->
+      <div class="bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span id="modal-pin-badge" class="px-2.5 py-1 rounded-xl bg-amber-500 text-slate-950 font-extrabold text-sm">หมุดที่ 1</span>
+          <div>
+            <h2 id="modal-title" class="text-sm sm:text-base font-bold">บันทึกข้อมูลพิกัดและป้าย</h2>
+            <p id="modal-coord-text" class="text-[11px] text-slate-300 font-mono">พิกัด: 13.385000, 101.345000</p>
+          </div>
+        </div>
+        <button type="button" onclick="closePinModal()" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-white flex items-center justify-center font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- เนื้อหาฟอร์ม -->
+      <form id="pin-form" onsubmit="savePinForm(event)" class="p-4 sm:p-6 space-y-5">
+        <input type="hidden" id="form-pin-id" />
+
+        <!-- ส่วนที่ 1: ข้อมูลสถานที่และพิกัด -->
+        <div class="space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 border-b border-slate-200 pb-1">1. ข้อมูลร้านค้า / จุดปักหมุด</h3>
+
+          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div class="sm:col-span-3">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เลขลำดับหมุด *</label>
+              <input type="number" min="1" id="form-pin-no" required class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-bold text-center bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div class="sm:col-span-9">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อร้าน / สถานประกอบการ *</label>
+              <input type="text" id="form-shop-name" required placeholder="เช่น ร้านท่าบุญมีวัสดุก่อสร้าง, คลินิกหมอสมชาย" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div class="sm:col-span-5">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ชื่อเจ้าของป้าย / ผู้ประกอบการ</label>
+              <input type="text" id="form-owner" placeholder="ระบุชื่อ-นามสกุล (ถ้าทราบ)" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div class="sm:col-span-3">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">หมู่ที่</label>
+              <select id="form-moo" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+                <option value="">- เลือกหมู่ -</option>
+              </select>
+            </div>
+
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">สถานะการสำรวจ/จัดเก็บ</label>
+              <select id="form-status" class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+                <option value="รอสำรวจ">🟡 รอสำรวจ</option>
+                <option value="ยื่นแบบ ภ.ป.1 แล้ว">🔵 ยื่นแบบ ภ.ป.1 แล้ว</option>
+                <option value="ชำระแล้ว">🟢 ชำระแล้ว</option>
+                <option value="พบป้ายใหม่">🔴 พบป้ายใหม่</option>
+                <option value="รื้อถอน/ยกเลิก">⚫ รื้อถอน/ยกเลิก</option>
+              </select>
+            </div>
+
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">เบอร์โทรศัพท์</label>
+              <input type="tel" id="form-phone" placeholder="08x-xxx-xxxx" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ละติจูด (Lat)</label>
+              <input type="number" step="any" id="form-lat" required class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-slate-50" />
+            </div>
+
+            <div class="sm:col-span-4">
+              <label class="block text-xs font-semibold text-slate-700 mb-1">ลองจิจูด (Lng)</label>
+              <input type="number" step="any" id="form-lng" required class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-slate-50" />
+            </div>
+          </div>
+        </div>
+
+        <!-- ส่วนที่ 2: รูปถ่ายป้าย (ถ่ายจากกล้องแท็บเล็ต & เลือกรูปจากเครื่อง) -->
+        <div class="space-y-2.5 bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 class="text-xs font-bold text-slate-800">2. รูปถ่ายป้าย / หน้าร้าน (<span id="photo-count-badge">0</span> รูป)</h3>
+              <p class="text-[11px] text-slate-500">บีบอัดขนาดอัตโนมัติเพื่อให้เก็บได้หลายร้อยหมุดและโอนไฟล์ .JSON ได้รวดเร็ว</p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- ปุ่มถ่ายรูปจากกล้อง -->
+              <label class="px-3.5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-95 text-white text-xs font-bold shadow cursor-pointer flex items-center gap-1.5 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h2l1.5-2h7L17 7h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <circle cx="12" cy="13" r="3.5" />
+                </svg>
+                <span>ถ่ายรูปจากกล้อง</span>
+                <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handlePhotoFiles(event)" class="hidden" />
+              </label>
+
+              <!-- ปุ่มเลือกรูปจากเครื่อง -->
+              <label class="px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 active:scale-95 text-slate-800 border border-slate-300 text-xs font-bold shadow-sm cursor-pointer flex items-center gap-1.5 transition">
+                <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <circle cx="8.5" cy="9.5" r="1.5" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 15l-5-5L5 20" />
+                </svg>
+                <span>เลือกรูปจากเครื่อง</span>
+                <input type="file" id="gallery-input" accept="image/*" multiple onchange="handlePhotoFiles(event)" class="hidden" />
+              </label>
+            </div>
+          </div>
+
+          <!-- แกลเลอรีรูปตัวอย่าง -->
+          <div id="modal-photo-gallery" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1"></div>
+        </div>
+
+        <!-- ส่วนที่ 3: รายการป้ายและการคำนวณภาษีตามกฎกระทรวง พ.ศ. 2563 -->
+        <div class="space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-1.5">
+            <div>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-slate-700">3. รายการป้ายและคำนวณภาษี (กฎกระทรวง พ.ศ. 2563)</h3>
+              <p class="text-[11px] text-slate-500">เพิ่มป้ายได้หลายแผ่นในร้านเดียว พร้อมช่องหมายเหตุแยกเฉพาะแต่ละป้าย</p>
+            </div>
+            <button type="button" onclick="addSignRow()" class="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition">
+              + เพิ่มป้ายอีกแผ่น
+            </button>
+          </div>
+
+          <div id="signs-container" class="space-y-3"></div>
+
+          <!-- กล่องสรุปยอดภาษีรวมของจุดนี้ -->
+          <div class="p-3.5 rounded-2xl bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2">
+            <div class="text-xs">
+              <span class="text-slate-300">จำนวนป้ายที่คิดภาษี:</span>
+              <span id="modal-active-sign-count" class="font-bold text-amber-400 text-sm ml-1">1</span> ป้าย
+            </div>
+            <div class="text-sm sm:text-base font-bold">
+              รวมภาษีป้ายจุดนี้: <span id="modal-total-tax" class="text-emerald-400 text-lg sm:text-xl font-mono">200</span> บาท
+            </div>
+          </div>
+        </div>
+
+        <!-- หมายเหตุรวมของจุด/ร้านค้า -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">หมายเหตุรวมของร้าน / จุดสังเกตการเดินทาง</label>
+          <textarea id="form-note" rows="2" placeholder="เช่น ร้านอยู่หัวมุมซอยตรงข้ามตลาดนัด เจ้าของร้านแจ้งว่าติดป้ายใหม่เมื่อเดือนเมษายน" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
+        </div>
+
+        <!-- ปุ่มบันทึก / ยกเลิก / ลบหมุด -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-200">
+          <div id="modal-delete-zone">
+            <button type="button" id="btn-ask-delete-pin" onclick="toggleDeletePinConfirm(true)" class="hidden px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 text-xs font-bold transition">
+              ลบหมุดนี้
+            </button>
+            <div id="confirm-delete-pin-box" class="hidden flex items-center gap-1.5">
+              <span class="text-xs text-red-700 font-semibold">ยืนยันลบหมุด?</span>
+              <button type="button" onclick="deleteCurrentPin()" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold">ลบเลย</button>
+              <button type="button" onclick="toggleDeletePinConfirm(false)" class="px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 text-xs">ไม่ลบ</button>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 ml-auto">
+            <button type="button" onclick="closePinModal()" class="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-semibold transition">
+              ยกเลิก
+            </button>
+            <button type="submit" class="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs sm:text-sm font-bold shadow-md transition">
+              บันทึกข้อมูลหมุด
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- โมดอล 2: ใส่พิกัด Lat/Lng หรือวางลิงก์ Google Maps -->
+  <!-- ===================================================================== -->
+  <div id="coord-modal" class="hidden fixed inset-0 z-[2100] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200">
+      <div class="bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between">
+        <h3 class="text-sm font-bold">ปักหมุดจากพิกัด หรือวางลิงก์ Google Maps</h3>
+        <button type="button" onclick="closeCoordModal()" class="w-8 h-8 rounded-lg bg-slate-800 text-white font-bold">✕</button>
+      </div>
+      <div class="p-5 space-y-3.5">
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">วางลิงก์ Google Maps หรือพิมพ์พิกัด (Lat, Lng)</label>
+          <input type="text" id="paste-maps-input" oninput="parseMapsInput()" placeholder="เช่น 13.3852, 101.3458 หรือ https://maps.google.com/..." class="w-full px-3 py-2.5 rounded-xl border border-slate-300 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          <p class="text-[11px] text-slate-500 mt-1">ระบบจะดึงค่าละติจูดและลองจิจูดให้อัตโนมัติ</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ละติจูด (Latitude)</label>
+            <input type="number" step="any" id="manual-lat" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1">ลองจิจูด (Longitude)</label>
+            <input type="number" step="any" id="manual-lng" class="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono" />
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button type="button" onclick="goToManualCoord(false)" class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold">
+            เลื่อนแผนที่ไปดูจุดนี้
+          </button>
+          <button type="button" onclick="goToManualCoord(true)" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold">
+            ปักหมุดตรงพิกัดนี้เลย
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- โมดอล 3: ดูรูปภาพขนาดเต็ม (Lightbox) -->
+  <!-- ===================================================================== -->
+  <div id="lightbox-modal" onclick="closeLightbox()" class="hidden fixed inset-0 z-[2200] bg-black/90 flex items-center justify-center p-4">
+    <button type="button" onclick="closeLightbox()" class="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/20 text-white font-bold text-lg">✕</button>
+    <img id="lightbox-img" src="" alt="รูปถ่ายป้าย" class="max-w-full max-h-[88vh] rounded-2xl shadow-2xl object-contain" />
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- โมดอล 4: ใบพิมพ์สรุปผลการสำรวจประกอบแบบ ภ.ป.1 -->
+  <!-- ===================================================================== -->
+  <div id="print-sheet-modal" class="hidden fixed inset-0 z-[2300] bg-slate-950/75 overflow-y-auto p-2 sm:p-6">
+    <div class="max-w-3xl mx-auto bg-white rounded-2xl shadow-2xl p-5 sm:p-8 space-y-5">
+      <div class="no-print flex items-center justify-between border-b border-slate-200 pb-3">
+        <span class="text-xs font-semibold text-slate-600">ตัวอย่างเอกสารสรุปผลการสำรวจภาษีป้าย (ใช้ตัวเลขอารบิกทั้งหมด)</span>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="window.print()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold">
+            สั่งพิมพ์ / บันทึก PDF
+          </button>
+          <button type="button" onclick="closePrintSheet()" class="px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold">
+            ปิดหน้าต่าง
+          </button>
+        </div>
+      </div>
+      <div id="print-sheet-content" class="space-y-4 text-slate-900"></div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. ค่าคงที่และหลักเกณฑ์อัตราภาษีป้าย (กฎกระทรวง กำหนดอัตราภาษีป้าย พ.ศ. 2563)
+    // =========================================================================
+    const STORAGE_KEY = 'thai_signboard_tax_gis_v3';
+    const DEFAULT_CENTER = [13.3850, 101.3450]; // พื้นที่ตำบลท่าบุญมี อ.เกาะจันทร์ จ.ชลบุรี
+
+    const SIGN_TYPES = [
+      {
+        id: '1_static',
+        label: 'ประเภท 1 (อักษรไทยล้วน) - ข้อความ/ภาพนิ่ง',
+        shortLabel: 'ประเภท 1 ไทยล้วน (นิ่ง)',
+        rate: 5
+      },
+      {
+        id: '1_moving',
+        label: 'ประเภท 1 (อักษรไทยล้วน) - เคลื่อนที่/เปลี่ยนข้อความได้',
+        shortLabel: 'ประเภท 1 ไทยล้วน (เคลื่อนที่)',
+        rate: 10
+      },
+      {
+        id: '2_static',
+        label: 'ประเภท 2 (ไทยปนต่างประเทศ/ภาพ) - ข้อความ/ภาพนิ่ง',
+        shortLabel: 'ประเภท 2 ไทยปนต่างประเทศ/ภาพ (นิ่ง)',
+        rate: 26
+      },
+      {
+        id: '2_moving',
+        label: 'ประเภท 2 (ไทยปนต่างประเทศ/ภาพ) - เคลื่อนที่/เปลี่ยนข้อความได้',
+        shortLabel: 'ประเภท 2 ไทยปนต่างประเทศ/ภาพ (เคลื่อนที่)',
+        rate: 52
+      },
+      {
+        id: '3_static',
+        label: 'ประเภท 3 (ไม่มีไทย/ไทยอยู่ต่ำกว่าต่างประเทศ) - ข้อความ/ภาพนิ่ง',
+        shortLabel: 'ประเภท 3 ไม่มีไทย/ไทยอยู่ล่าง (นิ่ง)',
+        rate: 50
+      },
+      {
+        id: '3_moving',
+        label: 'ประเภท 3 (ไม่มีไทย/ไทยอยู่ต่ำกว่าต่างประเทศ) - เคลื่อนที่/เปลี่ยนข้อความได้',
+        shortLabel: 'ประเภท 3 ไม่มีไทย/ไทยอยู่ล่าง (เคลื่อนที่)',
+        rate: 52
+      }
+    ];
+
+    const QUARTER_OPTIONS = [
+      { value: 1.0, label: 'เต็มปี (100% - ม.ค.-มี.ค.)' },
+      { value: 0.75, label: '3 ไตรมาส (75% - เม.ย.-มิ.ย.)' },
+      { value: 0.5, label: '2 ไตรมาส (50% - ก.ค.-ก.ย.)' },
+      { value: 0.25, label: '1 ไตรมาส (25% - ต.ค.-ธ.ค.)' }
+    ];
+
+    const STATUS_STYLES = {
+      'รอสำรวจ': { color: '#f59e0b', badge: 'bg-amber-100 text-amber-900 border-amber-300' },
+      'ยื่นแบบ ภ.ป.1 แล้ว': { color: '#2563eb', badge: 'bg-blue-100 text-blue-900 border-blue-300' },
+      'ชำระแล้ว': { color: '#16a34a', badge: 'bg-emerald-100 text-emerald-900 border-emerald-300' },
+      'พบป้ายใหม่': { color: '#dc2626', badge: 'bg-red-100 text-red-900 border-red-300' },
+      'รื้อถอน/ยกเลิก': { color: '#475569', badge: 'bg-slate-200 text-slate-700 border-slate-300' }
+    };
+
+    // =========================================================================
+    // 2. ตัวแปรสถานะของระบบ
+    // =========================================================================
+    let pins = [];
+    let map = null;
+    let mapReady = false;
+    let streetLayer = null;
+    let satelliteLayer = null;
+    let currentLayerType = 'street';
+    let markerGroup = null;
+    let userLocationMarker = null;
+    let userLatLng = null;
+    let gpsWatchId = null;
+
+    let trackingPinId = null;
+    let trackingLine = null;
+
+    let modalPhotos = [];
+    let fallbackCenter = { lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] };
+
+    // =========================================================================
+    // 3. เริ่มต้นระบบเมื่อโหลดหน้าเว็บเสร็จ
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      populateMooDropdowns();
+      loadPinsFromStorage();
+      initMapSafe();
+      renderAll();
+      startSilentGpsWatch();
+    });
+
+    function populateMooDropdowns() {
+      const filterMoo = document.getElementById('filter-moo');
+      const formMoo = document.getElementById('form-moo');
+      for (let i = 1; i <= 20; i++) {
+        const opt1 = document.createElement('option');
+        opt1.value = `หมู่ ${i}`;
+        opt1.textContent = `หมู่ ${i}`;
+        filterMoo.appendChild(opt1);
+
+        const opt2 = document.createElement('option');
+        opt2.value = `หมู่ ${i}`;
+        opt2.textContent = `หมู่ที่ ${i}`;
+        formMoo.appendChild(opt2);
+      }
+    }
+
+    // =========================================================================
+    // 4. สร้างภาพจำลองป้ายตัวอย่าง (Canvas) สำหรับข้อมูลตัวอย่าง 4 หมุด
+    // =========================================================================
+    function createSampleSignImage(title, subtitle, bgHex, accentHex) {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 480;
+        canvas.height = 280;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = bgHex;
+        ctx.fillRect(0, 0, 480, 280);
+
+        ctx.strokeStyle = accentHex;
+        ctx.lineWidth = 8;
+        ctx.strokeRect(18, 18, 444, 244);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 28px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(title, 240, 130);
+
+        ctx.fillStyle = accentHex;
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillText(subtitle, 240, 175);
+
+        return canvas.toDataURL('image/jpeg', 0.65);
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function getDefaultSamplePins() {
+      const img1 = createSampleSignImage('ร้านท่าบุญมีวัสดุก่อสร้าง', 'ป้ายอักษรไทยล้วน 120x300 ซม.', '#1e3a8a', '#fbbf24');
+      const img2 = createSampleSignImage('THA BUNMI COFFEE & CAFE', 'ป้ายไทยปนอังกฤษ + ป้ายไฟ LED', '#065f46', '#6ee7b7');
+      const img3 = createSampleSignImage('อู่ช่างสมชาย เซอร์วิส', 'ตรวจพบป้ายโปรโมชันติดเพิ่มใหม่', '#7f1d1d', '#fca5a5');
+      const img4 = createSampleSignImage('คลินิกทันตกรรมท่าบุญมี', 'ชำระภาษีป้ายประจำปีเรียบร้อย', '#312e81', '#c7d2fe');
+
+      return [
+        {
+          id: 'sample-pin-1',
+          pinNo: 1,
+          shopName: 'ร้านท่าบุญมีวัสดุก่อสร้าง',
+          owner: 'นายสมศักดิ์ เจริญทรัพย์',
+          moo: 'หมู่ 1',
+          phone: '081-445-2210',
+          status: 'รอสำรวจ',
+          lat: 13.3856,
+          lng: 101.3442,
+          note: 'ร้านอยู่ริมถนนสายหลัก ติดสามแยกไฟแดง',
+          photos: img1 ? [img1] : [],
+          signs: [
+            {
+              id: 's-101',
+              name: 'ป้ายชื่อร้านบนหลังคา',
+              origin: 'ป้ายเดิม (ปีก่อน)',
+              typeId: '1_static',
+              width: 120,
+              height: 300,
+              quarter: 1.0,
+              note: 'ป้ายเดิมปีที่แล้ว สภาพสมบูรณ์ ตรวจสอบขนาดตรงตามแบบ'
+            },
+            {
+              id: 's-102',
+              name: 'ป้ายบอกทางเข้าลานจอดรถ',
+              origin: 'ป้ายเดิม (ปีก่อน)',
+              typeId: '1_static',
+              width: 60,
+              height: 100,
+              quarter: 1.0,
+              note: 'ป้ายเล็กติดเสาหน้าร้าน คิดอัตราขั้นต่ำ 200 บาท'
+            }
+          ]
+        },
+        {
+          id: 'sample-pin-2',
+          pinNo: 2,
+          shopName: 'ท่าบุญมี คอฟฟี่ แอนด์ คาเฟ่',
+          owner: 'นางสาวณัฐธิดา วงศ์สุวรรณ',
+          moo: 'หมู่ 1',
+          phone: '089-772-9104',
+          status: 'ยื่นแบบ ภ.ป.1 แล้ว',
+          lat: 13.3849,
+          lng: 101.3455,
+          note: 'เจ้าของร้านยื่นแบบ ภ.ป.1 เรียบร้อย รอชำระเงิน',
+          photos: img2 ? [img2] : [],
+          signs: [
+            {
+              id: 's-201',
+              name: 'ป้ายหน้าร้าน THA BUNMI COFFEE',
+              origin: 'ป้ายเดิม (ปีก่อน)',
+              typeId: '2_static',
+              width: 100,
+              height: 220,
+              quarter: 1.0,
+              note: 'อักษรไทยปนภาษาอังกฤษและมีโลโก้ถ้วยกาแฟ'
+            },
+            {
+              id: 's-202',
+              name: 'ป้ายไฟวิ่ง LED โปรโมชัน',
+              origin: 'ป้ายใหม่ (ติดเพิ่ม)',
+              typeId: '2_moving',
+              width: 40,
+              height: 120,
+              quarter: 0.75,
+              note: 'ติดเพิ่มเดือนเมษายน เป็นป้ายไฟเปลี่ยนข้อความได้'
+            }
+          ]
+        },
+        {
+          id: 'sample-pin-3',
+          pinNo: 3,
+          shopName: 'อู่ช่างสมชาย เซอร์วิส',
+          owner: 'นายสมชาย รักงาน',
+          moo: 'หมู่ 2',
+          phone: '086-312-8845',
+          status: 'พบป้ายใหม่',
+          lat: 13.3841,
+          lng: 101.3463,
+          note: 'ขี่รถสำรวจพบป้ายไวนิลเปลี่ยนถ่ายน้ำมันเครื่องติดเพิ่มริมรั้ว',
+          photos: img3 ? [img3] : [],
+          signs: [
+            {
+              id: 's-301',
+              name: 'ป้ายชื่ออู่ซ่อมรถ',
+              origin: 'ป้ายเดิม (ปีก่อน)',
+              typeId: '1_static',
+              width: 100,
+              height: 200,
+              quarter: 1.0,
+              note: 'ป้ายเดิมปีก่อน 40 หน่วย = 200 บาท'
+            },
+            {
+              id: 's-302',
+              name: 'ป้ายน้ำมันเครื่อง CASTROL SERVICE',
+              origin: 'ป้ายใหม่ (ติดเพิ่ม)',
+              typeId: '3_static',
+              width: 100,
+              height: 150,
+              quarter: 1.0,
+              note: 'อักษรภาษาอังกฤษอยู่บนสุด คิดอัตราประเภท 3 (50 บ./500 ตร.ซม.)'
+            }
+          ]
+        },
+        {
+          id: 'sample-pin-4',
+          pinNo: 4,
+          shopName: 'คลินิกทันตกรรมท่าบุญมี',
+          owner: 'ทพญ.ปิยะนุช ศรีสวัสดิ์',
+          moo: 'หมู่ 3',
+          phone: '038-209-441',
+          status: 'ชำระแล้ว',
+          lat: 13.3858,
+          lng: 101.3468,
+          note: 'ชำระภาษีป้ายประจำปีครบถ้วนแล้ว ออกใบเสร็จเรียบร้อย',
+          photos: img4 ? [img4] : [],
+          signs: [
+            {
+              id: 's-401',
+              name: 'ป้ายกล่องไฟหน้าคลินิก',
+              origin: 'ป้ายเดิม (ปีก่อน)',
+              typeId: '2_static',
+              width: 120,
+              height: 250,
+              quarter: 1.0,
+              note: 'ป้ายกล่องไฟนิ่ง อักษรไทยปนอังกฤษ'
+            }
+          ]
+        }
+      ];
+    }
+
+    function loadPinsFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            pins = parsed;
+            ensureSequentialNumbers(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('ไม่สามารถอ่าน localStorage ได้:', err);
+      }
+      // โหลดข้อมูลตัวอย่าง 4 หมุดอัตโนมัติในครั้งแรก
+      pins = getDefaultSamplePins();
+      savePinsToStorage();
+    }
+
+    function savePinsToStorage() {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(pins));
+      } catch (err) {
+        showToast('หน่วยความจำในเบราว์เซอร์ใกล้เต็ม กรุณากดส่งออกไฟล์ .JSON เก็บสำรองไว้ทันที', 'error');
+      }
+    }
+
+    function ensureSequentialNumbers(forceReindex) {
+      pins.sort((a, b) => (a.pinNo || 999999) - (b.pinNo || 999999));
+      if (forceReindex) {
+        pins.forEach((p, idx) => {
+          p.pinNo = idx + 1;
+        });
+      } else {
+        pins.forEach((p, idx) => {
+          if (!p.pinNo || typeof p.pinNo !== 'number') {
+            p.pinNo = idx + 1;
+          }
+        });
+      }
+    }
+
+    function getNextPinNumber() {
+      if (pins.length === 0) return 1;
+      const maxNo = pins.reduce((max, p) => Math.max(max, Number(p.pinNo) || 0), 0);
+      return maxNo + 1;
+    }
+
+    function renumberPins() {
+      ensureSequentialNumbers(true);
+      savePinsToStorage();
+      renderAll();
+      showToast('จัดเรียงเลขลำดับหมุดใหม่เป็น 1 ถึง ' + pins.length + ' เรียบร้อยแล้ว', 'success');
+    }
+
+    // =========================================================================
+    // 5. สูตรคำนวณภาษีป้ายตามกฎกระทรวง พ.ศ. 2563
+    // =========================================================================
+    function calculateSignTax(sign) {
+      const w = Math.max(0, parseFloat(sign.width) || 0);
+      const h = Math.max(0, parseFloat(sign.height) || 0);
+      const area = w * h; // ตารางเซนติเมตร
+      const units = area > 0 ? Math.ceil(area / 500) : 0;
+      const typeObj = SIGN_TYPES.find(t => t.id === sign.typeId) || SIGN_TYPES[0];
+      const quarter = parseFloat(sign.quarter) || 1.0;
+
+      if (sign.origin === 'รื้อถอน/ยกเลิก' || area <= 0) {
+        return {
+          area,
+          units,
+          rate: typeObj.rate,
+          rawTax: 0,
+          finalTax: 0,
+          isMinimumApplied: false
+        };
+      }
+
+      const rawTax = units * typeObj.rate * quarter;
+      const isMinimumApplied = rawTax < 200;
+      const finalTax = isMinimumApplied ? 200 : Math.round(rawTax * 100) / 100;
+
+      return {
+        area,
+        units,
+        rate: typeObj.rate,
+        rawTax,
+        finalTax,
+        isMinimumApplied
+      };
+    }
+
+    function calculatePinTotalTax(pin) {
+      if (!pin || !Array.isArray(pin.signs)) return 0;
+      return pin.signs.reduce((sum, s) => sum + calculateSignTax(s).finalTax, 0);
+    }
+
+    // =========================================================================
+    // 6. ระบบแผนที่ Leaflet แบบป้องกันการค้าง + แผนที่สำรองออฟไลน์
+    // =========================================================================
+    function initMapSafe() {
+      try {
+        if (typeof L === 'undefined') {
+          throw new Error('Leaflet library not available');
+        }
+
+        const startLat = pins.length > 0 ? pins[0].lat : DEFAULT_CENTER[0];
+        const startLng = pins.length > 0 ? pins[0].lng : DEFAULT_CENTER[1];
+
+        map = L.map('leaflet-map', {
+          center: [startLat, startLng],
+          zoom: 17,
+          maxZoom: 19,
+          zoomControl: true
+        });
+
+        // ตั้ง maxNativeZoom เพื่อไม่ให้ซูมใกล้แล้วภาพหายเป็นสีเทา
+        streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          maxNativeZoom: 19,
+          attribution: '&copy; OpenStreetMap'
+        });
+
+        satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          maxZoom: 19,
+          maxNativeZoom: 18,
+          attribution: '&copy; Esri World Imagery'
+        });
+
+        streetLayer.addTo(map);
+        markerGroup = L.layerGroup().addTo(map);
+        mapReady = true;
+
+        // อัปเดตพิกัดใต้เป้ากลางจอตลอดเวลาที่เลื่อนแผนที่
+        map.on('move', () => {
+          const c = map.getCenter();
+          updateCenterLabel(c.lat, c.lng);
+        });
+        updateCenterLabel(startLat, startLng);
+
+        // แตะ/คลิกบนแผนที่เพื่อปักหมุดจุดนั้น
+        map.on('click', (e) => {
+          openPinModal({
+            lat: Number(e.latlng.lat.toFixed(6)),
+            lng: Number(e.latlng.lng.toFixed(6))
+          });
+        });
+
+      } catch (err) {
+        console.warn('เปิดโหมดแผนที่สำรองอัตโนมัติ:', err);
+        mapReady = false;
+        document.getElementById('leaflet-map').classList.add('hidden');
+        document.getElementById('fallback-map').classList.remove('hidden');
+        updateCenterLabel(fallbackCenter.lat, fallbackCenter.lng);
+      }
+    }
+
+    function updateCenterLabel(lat, lng) {
+      const el = document.getElementById('center-coord-label');
+      if (el) {
+        el.textContent = `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+      }
+    }
+
+    function setMapLayer(type) {
+      currentLayerType = type;
+      const btnStreet = document.getElementById('layer-btn-street');
+      const btnSat = document.getElementById('layer-btn-satellite');
+
+      if (type === 'street') {
+        btnStreet.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition';
+        btnSat.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition';
+        if (mapReady && map && streetLayer && satelliteLayer) {
+          map.removeLayer(satelliteLayer);
+          streetLayer.addTo(map);
+        }
+      } else {
+        btnSat.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 text-white transition';
+        btnStreet.className = 'px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100 transition';
+        if (mapReady && map && streetLayer && satelliteLayer) {
+          map.removeLayer(streetLayer);
+          satelliteLayer.addTo(map);
+        }
+      }
+    }
+
+    function getCurrentMapCenter() {
+      if (mapReady && map) {
+        const c = map.getCenter();
+        return { lat: Number(c.lat.toFixed(6)), lng: Number(c.lng.toFixed(6)) };
+      }
+      return { lat: fallbackCenter.lat, lng: fallbackCenter.lng };
+    }
+
+    // ปักหมุดตรงเป้ากลางจอ (+)
+    function pinAtCenter() {
+      const center = getCurrentMapCenter();
+      openPinModal({ lat: center.lat, lng: center.lng });
+    }
+
+    // ปักหมุดตำแหน่ง GPS ปัจจุบัน
+    function pinAtCurrentGPS() {
+      if (!navigator.geolocation) {
+        showToast('อุปกรณ์นี้ไม่รองรับ GPS กรุณาใช้ปุ่ม "ปักหมุดตรงเป้ากลางจอ (+)" แทน', 'error');
+        return;
+      }
+      showToast('กำลังดึงพิกัด GPS ปัจจุบัน...', 'info');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = Number(pos.coords.latitude.toFixed(6));
+          const lng = Number(pos.coords.longitude.toFixed(6));
+          userLatLng = { lat, lng };
+          updateUserMarkerOnMap();
+          if (mapReady && map) {
+            map.setView([lat, lng], 18);
+          }
+          openPinModal({ lat, lng });
+        },
+        () => {
+          showToast('ไม่สามารถดึง GPS ได้ (หากเปิดในหน้า Preview หรือ file:// ให้ใช้ปุ่ม "ปักหมุดตรงเป้ากลางจอ (+)" หรืออัปขึ้นลิงก์ HTTPS)', 'error');
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+      );
+    }
+
+    function startSilentGpsWatch() {
+      if (!navigator.geolocation) return;
+      try {
+        gpsWatchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            userLatLng = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude
+            };
+            updateUserMarkerOnMap();
+            updateTrackingDistanceUI();
+          },
+          () => {
+            // เงียบไว้หากยังไม่เปิดสิทธิ์ GPS จนกว่าผู้ใช้จะกดปุ่ม
+          },
+          { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+        );
+      } catch (e) {
+        // ป้องกัน error ใน sandbox
+      }
+    }
+
+    function locateUser(flyTo) {
+      if (!navigator.geolocation) {
+        showToast('เบราว์เซอร์ไม่รองรับ GPS', 'error');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          userLatLng = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          updateUserMarkerOnMap();
+          if (flyTo && mapReady && map) {
+            map.flyTo([userLatLng.lat, userLatLng.lng], 18);
+          }
+          showToast('อัปเดตตำแหน่งปัจจุบันของคุณแล้ว', 'success');
+        },
+        () => {
+          showToast('เบราว์เซอร์ไม่อนุญาตให้เข้าถึง GPS (ตรวจสิทธิ์ Location หรือเปิดผ่านลิงก์ HTTPS)', 'error');
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+
+    function updateUserMarkerOnMap() {
+      if (!mapReady || !map || !userLatLng) return;
+      if (!userLocationMarker) {
+        const icon = L.divIcon({
+          className: 'numbered-pin-wrapper',
+          html: '<div class="gps-pulse" title="ตำแหน่งปัจจุบันของคุณ"></div>',
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        });
+        userLocationMarker = L.marker([userLatLng.lat, userLatLng.lng], { icon }).addTo(map);
+      } else {
+        userLocationMarker.setLatLng([userLatLng.lat, userLatLng.lng]);
+      }
+    }
+
+    // =========================================================================
+    // 7. ระบบติดตามเส้นทางและระยะห่างไปยังหมุดเป้าหมาย
+    // =========================================================================
+    function startTrackingPin(pinId) {
+      const pin = pins.find(p => p.id === pinId);
+      if (!pin) return;
+
+      trackingPinId = pinId;
+      document.getElementById('tracking-banner').classList.remove('hidden');
+      document.getElementById('track-pin-no').textContent = pin.pinNo;
+      document.getElementById('track-shop-name').textContent = pin.shopName;
+      document.getElementById('track-gmaps-link').href = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+
+      if (mapReady && map) {
+        map.flyTo([pin.lat, pin.lng], 18);
+      }
+      updateTrackingDistanceUI();
+      locateUser(false);
+    }
+
+    function stopTracking() {
+      trackingPinId = null;
+      document.getElementById('tracking-banner').classList.add('hidden');
+      if (mapReady && map && trackingLine) {
+        map.removeLayer(trackingLine);
+        trackingLine = null;
+      }
+    }
+
+    function updateTrackingDistanceUI() {
+      if (!trackingPinId) return;
+      const pin = pins.find(p => p.id === trackingPinId);
+      if (!pin) {
+        stopTracking();
+        return;
+      }
+
+      const distEl = document.getElementById('track-distance');
+      if (!userLatLng) {
+        distEl.textContent = 'กดปุ่ม "เปิด Google Maps นำทาง" ด้านขวาได้ทันที';
+        return;
+      }
+
+      const meters = calcDistanceMeters(userLatLng.lat, userLatLng.lng, pin.lat, pin.lng);
+      distEl.textContent = meters < 1000
+        ? `ห่างอีก ${Math.round(meters)} เมตร`
+        : `ห่างอีก ${(meters / 1000).toFixed(2)} กม.`;
+
+      if (mapReady && map) {
+        if (trackingLine) map.removeLayer(trackingLine);
+        trackingLine = L.polyline(
+          [[userLatLng.lat, userLatLng.lng], [pin.lat, pin.lng]],
+          { color: '#10b981', weight: 4, dashArray: '8, 8' }
+        ).addTo(map);
+      }
+    }
+
+    function calcDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    // =========================================================================
+    // 8. การวาดหมุดบนแผนที่ รายการด้านข้าง ทะเบียนป้าย และหน้าสรุป
+    // =========================================================================
+    function getFilteredPins() {
+      const keyword = (document.getElementById('search-input')?.value || '').trim().toLowerCase();
+      const moo = document.getElementById('filter-moo')?.value || '';
+      const status = document.getElementById('filter-status')?.value || '';
+
+      return pins.filter(p => {
+        if (moo && p.moo !== moo) return false;
+        if (status && p.status !== status) return false;
+        if (keyword) {
+          const hay = `${p.pinNo} ${p.shopName} ${p.owner || ''} ${p.moo || ''} ${p.note || ''}`.toLowerCase();
+          if (!hay.includes(keyword)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderAll() {
+      ensureSequentialNumbers(false);
+      const filtered = getFilteredPins();
+
+      document.getElementById('header-pin-count').textContent = pins.length;
+      document.getElementById('sidebar-count').textContent = filtered.length;
+
+      renderMapMarkers(filtered);
+      renderSidebarList(filtered);
+      renderFullRegisterList(filtered);
+      renderSummaryStats();
+    }
+
+    function renderMapMarkers(list) {
+      if (mapReady && map && markerGroup) {
+        markerGroup.clearLayers();
+        list.forEach(pin => {
+          const st = STATUS_STYLES[pin.status] || STATUS_STYLES['รอสำรวจ'];
+          const signCount = Array.isArray(pin.signs) ? pin.signs.length : 0;
+
+          const iconHtml = `
+            <div class="numbered-pin">
+              <svg viewBox="0 0 38 46" width="38" height="46">
+                <path d="M19 1C9.6 1 2 8.6 2 18c0 12.2 17 26.5 17 26.5S36 30.2 36 18C36 8.6 28.4 1 19 1z" fill="${st.color}" stroke="#ffffff" stroke-width="2.5"/>
+              </svg>
+              <span class="numbered-pin-num">${pin.pinNo}</span>
+              <span class="numbered-pin-count" title="จำนวนป้าย">${signCount}</span>
+            </div>
+          `;
+
+          const icon = L.divIcon({
+            className: 'numbered-pin-wrapper',
+            html: iconHtml,
+            iconSize: [38, 46],
+            iconAnchor: [19, 45],
+            popupAnchor: [0, -42]
+          });
+
+          const marker = L.marker([pin.lat, pin.lng], { icon });
+          marker.bindPopup(buildPopupHTML(pin));
+          markerGroup.addLayer(marker);
+        });
+      } else {
+        renderFallbackMapPins(list);
+      }
+    }
+
+    function renderFallbackMapPins(list) {
+      const layer = document.getElementById('fallback-pins-layer');
+      if (!layer) return;
+      layer.innerHTML = '';
+
+      list.forEach((pin, idx) => {
+        const st = STATUS_STYLES[pin.status] || STATUS_STYLES['รอสำรวจ'];
+        const x = 18 + ((idx * 19) % 68);
+        const y = 26 + ((idx * 17) % 52);
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.style.left = `${x}%`;
+        btn.style.top = `${y}%`;
+        btn.className = 'absolute -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-full text-white font-bold text-xs shadow-lg border-2 border-white flex items-center gap-1.5 hover:scale-105 transition';
+        btn.style.backgroundColor = st.color;
+        btn.innerHTML = `<span>#${pin.pinNo}</span><span class="max-w-[120px] truncate">${escapeHtml(pin.shopName)}</span>`;
+        btn.onclick = () => openPinModal(pin);
+        layer.appendChild(btn);
+      });
+    }
+
+    function buildPopupHTML(pin) {
+      const st = STATUS_STYLES[pin.status] || STATUS_STYLES['รอสำรวจ'];
+      const totalTax = calculatePinTotalTax(pin);
+      const firstPhoto = pin.photos && pin.photos.length > 0 ? pin.photos[0] : '';
+      const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+
+      return `
+        <div class="bg-white text-slate-900">
+          ${firstPhoto ? `<img src="${firstPhoto}" alt="รูปป้าย" class="w-full h-32 object-cover border-b border-slate-200" />` : ''}
+          <div class="p-3 space-y-2">
+            <div class="flex items-center justify-between gap-1.5">
+              <span class="px-2 py-0.5 rounded-lg bg-slate-900 text-amber-400 font-bold text-xs">หมุดที่ ${pin.pinNo}</span>
+              <span class="px-2 py-0.5 rounded-lg border text-[11px] font-semibold ${st.badge}">${escapeHtml(pin.status)}</span>
+            </div>
+            <div>
+              <div class="font-bold text-sm leading-snug">${escapeHtml(pin.shopName)}</div>
+              <div class="text-[11px] text-slate-500">${escapeHtml(pin.owner || 'ไม่ระบุเจ้าของ')} • ${escapeHtml(pin.moo || '-')}</div>
+            </div>
+            <div class="p-2 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs">
+              <span>จำนวน <strong>${pin.signs.length}</strong> ป้าย</span>
+              <span class="font-bold text-emerald-700">${formatMoney(totalTax)} บาท</span>
+            </div>
+            <div class="grid grid-cols-2 gap-1.5 pt-1">
+              <a href="${gmapsUrl}" target="_blank" rel="noopener" class="py-2 px-2 rounded-xl bg-blue-600 text-white text-[11px] font-bold text-center no-underline hover:bg-blue-700">
+                นำทาง Google Maps
+              </a>
+              <button type="button" onclick="startTrackingPin('${pin.id}')" class="py-2 px-2 rounded-xl bg-emerald-600 text-white text-[11px] font-bold hover:bg-emerald-700">
+                ติดตามระยะห่าง
+              </button>
+              <button type="button" onclick="editPinById('${pin.id}')" class="py-2 px-2 rounded-xl bg-amber-500 text-slate-950 text-[11px] font-bold hover:bg-amber-600">
+                แก้ไข / เพิ่มป้าย
+              </button>
+              <button type="button" onclick="openPrintSheet('${pin.id}')" class="py-2 px-2 rounded-xl bg-slate-200 text-slate-800 text-[11px] font-semibold hover:bg-slate-300">
+                พิมพ์ ภ.ป.1
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSidebarList(list) {
+      const container = document.getElementById('sidebar-pin-list');
+      if (!container) return;
+
+      if (list.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-10 px-4 text-slate-400 text-xs space-y-2">
+            <div class="font-semibold text-slate-600">ไม่พบรายการหมุดที่ตรงกับเงื่อนไข</div>
+            <p>กดปุ่ม "ปักหมุดตรงเป้ากลางจอ (+)" บนแผนที่เพื่อเพิ่มจุดสำรวจใหม่</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = list.map(pin => {
+        const st = STATUS_STYLES[pin.status] || STATUS_STYLES['รอสำรวจ'];
+        const totalTax = calculatePinTotalTax(pin);
+        const firstPhoto = pin.photos && pin.photos.length > 0 ? pin.photos[0] : '';
+        const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+
+        return `
+          <div class="p-3 rounded-2xl bg-white border border-slate-200 hover:border-amber-400 shadow-sm transition space-y-2.5">
+            <div class="flex items-start gap-2.5 cursor-pointer" onclick="focusPinOnMap('${pin.id}')">
+              <div class="w-9 h-9 rounded-xl text-white font-extrabold text-sm flex items-center justify-center shrink-0 shadow-sm" style="background-color:${st.color}">
+                ${pin.pinNo}
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center justify-between gap-1">
+                  <h3 class="text-xs sm:text-sm font-bold text-slate-900 truncate">${escapeHtml(pin.shopName)}</h3>
+                  <span class="px-2 py-0.5 rounded-md border text-[10px] font-semibold shrink-0 ${st.badge}">${escapeHtml(pin.status)}</span>
+                </div>
+                <p class="text-[11px] text-slate-500 truncate">${escapeHtml(pin.owner || 'ไม่ระบุเจ้าของ')} • ${escapeHtml(pin.moo || '-')}</p>
+                <div class="flex items-center gap-2 mt-1 text-[11px]">
+                  <span class="text-slate-600">ป้าย: <strong>${pin.signs.length}</strong> แผ่น</span>
+                  <span class="text-slate-300">|</span>
+                  <span class="font-bold text-emerald-700">${formatMoney(totalTax)} บาท</span>
+                </div>
+              </div>
+              ${firstPhoto ? `<img src="${firstPhoto}" alt="รูปป้าย" class="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0" />` : ''}
+            </div>
+
+            <div class="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-100">
+              <a href="${gmapsUrl}" target="_blank" rel="noopener" class="py-2 px-2 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 text-[11px] font-bold text-center no-underline transition">
+                นำทาง Maps
+              </a>
+              <button type="button" onclick="startTrackingPin('${pin.id}')" class="py-2 px-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold transition">
+                ติดตามหมุด
+              </button>
+              <button type="button" onclick="editPinById('${pin.id}')" class="py-2 px-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-[11px] font-bold transition">
+                แก้ไข/ถ่ายรูป
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function focusPinOnMap(pinId) {
+      const pin = pins.find(p => p.id === pinId);
+      if (!pin) return;
+      if (mapReady && map) {
+        map.flyTo([pin.lat, pin.lng], 18);
+        markerGroup.eachLayer(layer => {
+          const ll = layer.getLatLng();
+          if (Math.abs(ll.lat - pin.lat) < 0.00001 && Math.abs(ll.lng - pin.lng) < 0.00001) {
+            layer.openPopup();
+          }
+        });
+      }
+    }
+
+    function renderFullRegisterList(list) {
+      const container = document.getElementById('full-register-list');
+      if (!container) return;
+
+      if (list.length === 0) {
+        container.innerHTML = `<div class="col-span-full bg-white p-8 rounded-2xl text-center text-slate-500 text-sm border border-slate-200">ยังไม่มีข้อมูลป้ายในระบบ</div>`;
+        return;
+      }
+
+      container.innerHTML = list.map(pin => {
+        const st = STATUS_STYLES[pin.status] || STATUS_STYLES['รอสำรวจ'];
+        const totalTax = calculatePinTotalTax(pin);
+        const gmapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${pin.lat},${pin.lng}`;
+
+        const signsHtml = pin.signs.map((s, idx) => {
+          const calc = calculateSignTax(s);
+          const typeObj = SIGN_TYPES.find(t => t.id === s.typeId) || SIGN_TYPES[0];
+          return `
+            <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-bold text-slate-800">${idx + 1}. ${escapeHtml(s.name || 'ป้ายไม่มีชื่อ')}</span>
+                <span class="px-2 py-0.5 rounded bg-white border border-slate-200 text-[10px] font-semibold">${escapeHtml(s.origin)}</span>
+              </div>
+              <div class="text-[11px] text-slate-600">
+                ${escapeHtml(typeObj.shortLabel)} • ขนาด ${s.width} × ${s.height} ซม. (${calc.units} หน่วย) = <strong class="text-emerald-700">${formatMoney(calc.finalTax)} บาท</strong>
+                ${calc.isMinimumApplied ? '<span class="text-amber-700 font-semibold">(ขั้นต่ำ 200 บ.)</span>' : ''}
+              </div>
+              ${s.note ? `<div class="text-[11px] text-blue-800 bg-blue-50/70 px-2 py-1 rounded-lg">หมายเหตุป้าย: ${escapeHtml(s.note)}</div>` : ''}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between gap-3">
+            <div class="space-y-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center gap-2.5">
+                  <span class="w-9 h-9 rounded-xl bg-slate-900 text-amber-400 font-extrabold text-sm flex items-center justify-center shrink-0">
+                    #${pin.pinNo}
+                  </span>
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-900">${escapeHtml(pin.shopName)}</h3>
+                    <p class="text-xs text-slate-500">${escapeHtml(pin.owner || 'ไม่ระบุเจ้าของ')} • ${escapeHtml(pin.moo || '-')} • โทร ${escapeHtml(pin.phone || '-')}</p>
+                  </div>
+                </div>
+                <span class="px-2.5 py-1 rounded-lg border text-[11px] font-semibold ${st.badge}">${escapeHtml(pin.status)}</span>
+              </div>
+
+              ${pin.photos && pin.photos.length > 0 ? `
+                <div class="flex gap-2 overflow-x-auto pb-1">
+                  ${pin.photos.map(src => `<img src="${src}" onclick="openLightbox('${src}')" class="w-20 h-16 rounded-xl object-cover border border-slate-200 cursor-zoom-in shrink-0" />`).join('')}
+                </div>
+              ` : ''}
+
+              <div class="space-y-2">${signsHtml}</div>
+              ${pin.note ? `<p class="text-xs text-slate-600 bg-amber-50/70 px-3 py-2 rounded-xl border border-amber-200/60">หมายเหตุร้าน: ${escapeHtml(pin.note)}</p>` : ''}
+            </div>
+
+            <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div class="text-xs">
+                รวมภาษีจุดนี้: <span class="text-base font-bold text-emerald-700">${formatMoney(totalTax)} บาท</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <a href="${gmapsUrl}" target="_blank" rel="noopener" class="px-3 py-1.5 rounded-xl bg-blue-50 text-blue-700 text-xs font-semibold no-underline hover:bg-blue-100">Maps</a>
+                <button type="button" onclick="openPrintSheet('${pin.id}')" class="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-800 text-xs font-semibold hover:bg-slate-200">พิมพ์ ภ.ป.1</button>
+                <button type="button" onclick="editPinById('${pin.id}')" class="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 text-xs font-bold hover:bg-amber-600">แก้ไข</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderSummaryStats() {
+      let totalPins = pins.length;
+      let maxPin = pins.reduce((m, p) => Math.max(m, p.pinNo || 0), 0);
+      let activeSigns = 0;
+      let newSigns = 0;
+      let totalTax = 0;
+      let completedPins = 0;
+      let pendingPins = 0;
+
+      const byType = {};
+      SIGN_TYPES.forEach(t => {
+        byType[t.id] = { ...t, count: 0, tax: 0 };
+      });
+
+      pins.forEach(p => {
+        if (p.status === 'ชำระแล้ว' || p.status === 'ยื่นแบบ ภ.ป.1 แล้ว') completedPins++;
+        else if (p.status === 'รอสำรวจ' || p.status === 'พบป้ายใหม่') pendingPins++;
+
+        (p.signs || []).forEach(s => {
+          const calc = calculateSignTax(s);
+          if (s.origin !== 'รื้อถอน/ยกเลิก') {
+            activeSigns++;
+            if (s.origin === 'ป้ายใหม่ (ติดเพิ่ม)') newSigns++;
+            totalTax += calc.finalTax;
+            if (byType[s.typeId]) {
+              byType[s.typeId].count++;
+              byType[s.typeId].tax += calc.finalTax;
+            }
+          }
+        });
+      });
+
+      document.getElementById('stat-total-pins').textContent = totalPins;
+      document.getElementById('stat-max-pin').textContent = maxPin;
+      document.getElementById('stat-active-signs').textContent = activeSigns;
+      document.getElementById('stat-new-signs').textContent = newSigns;
+      document.getElementById('stat-total-tax').textContent = formatMoney(totalTax);
+      document.getElementById('stat-completed-pins').textContent = completedPins;
+      document.getElementById('stat-pending-pins').textContent = pendingPins;
+
+      const tbody = document.getElementById('summary-by-type-body');
+      tbody.innerHTML = Object.values(byType).map(row => `
+        <tr>
+          <td class="py-2.5 px-3 font-medium text-slate-800">${escapeHtml(row.label)}</td>
+          <td class="py-2.5 px-3 text-right font-mono">${row.rate} บาท</td>
+          <td class="py-2.5 px-3 text-right font-semibold">${row.count}</td>
+          <td class="py-2.5 px-3 text-right font-bold text-emerald-700">${formatMoney(row.tax)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // =========================================================================
+    // 9. โมดอลฟอร์มเพิ่ม/แก้ไขหมุด ถ่ายรูป และรายการป้าย
+    // =========================================================================
+    function editPinById(id) {
+      const pin = pins.find(p => p.id === id);
+      if (pin) openPinModal(pin);
+    }
+
+    function openPinModal(dataOrCoords) {
+      const modal = document.getElementById('pin-modal');
+      const signsContainer = document.getElementById('signs-container');
+      signsContainer.innerHTML = '';
+      toggleDeletePinConfirm(false);
+
+      const isEdit = dataOrCoords && dataOrCoords.id;
+
+      if (isEdit) {
+        document.getElementById('form-pin-id').value = dataOrCoords.id;
+        document.getElementById('form-pin-no').value = dataOrCoords.pinNo;
+        document.getElementById('modal-pin-badge').textContent = `หมุดที่ ${dataOrCoords.pinNo}`;
+        document.getElementById('modal-title').textContent = `แก้ไขข้อมูล: ${dataOrCoords.shopName}`;
+        document.getElementById('form-shop-name').value = dataOrCoords.shopName || '';
+        document.getElementById('form-owner').value = dataOrCoords.owner || '';
+        document.getElementById('form-moo').value = dataOrCoords.moo || '';
+        document.getElementById('form-status').value = dataOrCoords.status || 'รอสำรวจ';
+        document.getElementById('form-phone').value = dataOrCoords.phone || '';
+        document.getElementById('form-lat').value = dataOrCoords.lat;
+        document.getElementById('form-lng').value = dataOrCoords.lng;
+        document.getElementById('modal-coord-text').textContent = `พิกัด: ${Number(dataOrCoords.lat).toFixed(6)}, ${Number(dataOrCoords.lng).toFixed(6)}`;
+        document.getElementById('form-note').value = dataOrCoords.note || '';
+
+        modalPhotos = Array.isArray(dataOrCoords.photos) ? [...dataOrCoords.photos] : [];
+        (dataOrCoords.signs || []).forEach(s => addSignRow(s));
+        if (!dataOrCoords.signs || dataOrCoords.signs.length === 0) addSignRow();
+
+        document.getElementById('btn-ask-delete-pin').classList.remove('hidden');
+      } else {
+        const nextNo = getNextPinNumber();
+        const center = getCurrentMapCenter();
+        const lat = (dataOrCoords && typeof dataOrCoords.lat === 'number') ? dataOrCoords.lat : center.lat;
+        const lng = (dataOrCoords && typeof dataOrCoords.lng === 'number') ? dataOrCoords.lng : center.lng;
+
+        document.getElementById('form-pin-id').value = '';
+        document.getElementById('form-pin-no').value = nextNo;
+        document.getElementById('modal-pin-badge').textContent = `หมุดที่ ${nextNo}`;
+        document.getElementById('modal-title').textContent = `ปักหมุดจุดที่ ${nextNo} (เพิ่มสถานที่ใหม่)`;
+        document.getElementById('form-shop-name').value = '';
+        document.getElementById('form-owner').value = '';
+        document.getElementById('form-moo').value = '';
+        document.getElementById('form-status').value = 'รอสำรวจ';
+        document.getElementById('form-phone').value = '';
+        document.getElementById('form-lat').value = lat;
+        document.getElementById('form-lng').value = lng;
+        document.getElementById('modal-coord-text').textContent = `พิกัด: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+        document.getElementById('form-note').value = '';
+
+        modalPhotos = [];
+        addSignRow();
+        document.getElementById('btn-ask-delete-pin').classList.add('hidden');
+      }
+
+      document.getElementById('form-pin-no').oninput = function () {
+        document.getElementById('modal-pin-badge').textContent = `หมุดที่ ${this.value || '?'}`;
+      };
+
+      renderModalPhotos();
+      recalcModalTotals();
+      modal.classList.remove('hidden');
+    }
+
+    function closePinModal() {
+      document.getElementById('pin-modal').classList.add('hidden');
+    }
+
+    function addSignRow(signData = null) {
+      const container = document.getElementById('signs-container');
+      const idx = container.children.length + 1;
+      const s = signData || {
+        id: 'sign-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        name: `ป้ายที่ ${idx}`,
+        origin: 'ป้ายเดิม (ปีก่อน)',
+        typeId: '1_static',
+        width: 100,
+        height: 200,
+        quarter: 1.0,
+        note: ''
+      };
+
+      const card = document.createElement('div');
+      card.className = 'sign-row-card p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5';
+      card.dataset.signId = s.id;
+
+      const typeOptionsHtml = SIGN_TYPES.map(t =>
+        `<option value="${t.id}" ${t.id === s.typeId ? 'selected' : ''}>${t.label} (${t.rate} บ.)</option>`
+      ).join('');
+
+      const quarterOptionsHtml = QUARTER_OPTIONS.map(q =>
+        `<option value="${q.value}" ${Number(q.value) === Number(s.quarter) ? 'selected' : ''}>${q.label}</option>`
+      ).join('');
+
+      card.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="sign-row-title text-xs font-bold text-slate-900 bg-amber-200/70 px-2.5 py-0.5 rounded-lg">ป้ายแผ่นที่ ${idx}</span>
+          <button type="button" onclick="removeSignRow(this)" class="text-xs text-red-600 hover:underline font-semibold">ลบป้ายนี้</button>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+          <div class="sm:col-span-7">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">ข้อความบนป้าย / ตำแหน่งติดตั้ง</label>
+            <input type="text" class="s-name w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white" value="${escapeHtml(s.name)}" placeholder="เช่น ป้ายชื่อร้านหน้าร้าน, ป้ายไวนิลข้างเสา" />
+          </div>
+          <div class="sm:col-span-5">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">สถานะป้ายแผ่นนี้</label>
+            <select onchange="recalcModalTotals()" class="s-origin w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-semibold bg-white">
+              <option value="ป้ายเดิม (ปีก่อน)" ${s.origin === 'ป้ายเดิม (ปีก่อน)' ? 'selected' : ''}>ป้ายเดิม (ปีก่อน)</option>
+              <option value="ป้ายใหม่ (ติดเพิ่ม)" ${s.origin === 'ป้ายใหม่ (ติดเพิ่ม)' ? 'selected' : ''}>ป้ายใหม่ (ติดเพิ่ม)</option>
+              <option value="รื้อถอน/ยกเลิก" ${s.origin === 'รื้อถอน/ยกเลิก' ? 'selected' : ''}>รื้อถอน/ยกเลิก (ไม่คิดเงิน)</option>
+            </select>
+          </div>
+
+          <div class="sm:col-span-12">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">ประเภทป้าย (กฎกระทรวง พ.ศ. 2563)</label>
+            <select onchange="recalcModalTotals()" class="s-type w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white">${typeOptionsHtml}</select>
+          </div>
+
+          <div class="sm:col-span-3">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">กว้าง (ซม.)</label>
+            <input type="number" step="any" min="0" oninput="recalcModalTotals()" class="s-width w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-white" value="${s.width}" />
+          </div>
+          <div class="sm:col-span-3">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">ยาว (ซม.)</label>
+            <input type="number" step="any" min="0" oninput="recalcModalTotals()" class="s-height w-full px-3 py-2 rounded-xl border border-slate-300 text-xs font-mono bg-white" value="${s.height}" />
+          </div>
+          <div class="sm:col-span-6">
+            <label class="block text-[11px] font-semibold text-slate-600 mb-1">งวดการคิดภาษี</label>
+            <select onchange="recalcModalTotals()" class="s-quarter w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white">${quarterOptionsHtml}</select>
+          </div>
+
+          <div class="sm:col-span-12">
+            <label class="block text-[11px] font-semibold text-slate-700 mb-1">หมายเหตุป้ายนี้ (ระบุรายละเอียดเฉพาะแผ่นนี้)</label>
+            <input type="text" class="s-note w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white" value="${escapeHtml(s.note || '')}" placeholder="เช่น ป้ายเดิมปีก่อน อยู่หน้าร้าน / ติดเพิ่มใหม่ริมถนน / อักษรอังกฤษอยู่บน" />
+          </div>
+        </div>
+
+        <div class="s-calc-summary text-xs bg-white px-3 py-2 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2"></div>
+      `;
+
+      container.appendChild(card);
+      recalcModalTotals();
+    }
+
+    function removeSignRow(btn) {
+      const container = document.getElementById('signs-container');
+      if (container.children.length <= 1) {
+        showToast('ต้องมีรายการป้ายอย่างน้อย 1 แผ่น', 'error');
+        return;
+      }
+      btn.closest('.sign-row-card').remove();
+      recalcModalTotals();
+    }
+
+    function recalcModalTotals() {
+      const cards = document.querySelectorAll('.sign-row-card');
+      let activeCount = 0;
+      let totalTax = 0;
+
+      cards.forEach((card, i) => {
+        card.querySelector('.sign-row-title').textContent = `ป้ายแผ่นที่ ${i + 1}`;
+        const signObj = {
+          origin: card.querySelector('.s-origin').value,
+          typeId: card.querySelector('.s-type').value,
+          width: card.querySelector('.s-width').value,
+          height: card.querySelector('.s-height').value,
+          quarter: card.querySelector('.s-quarter').value
+        };
+        const res = calculateSignTax(signObj);
+        if (signObj.origin !== 'รื้อถอน/ยกเลิก' && res.area > 0) {
+          activeCount++;
+          totalTax += res.finalTax;
+        }
+
+        const sumEl = card.querySelector('.s-calc-summary');
+        if (signObj.origin === 'รื้อถอน/ยกเลิก') {
+          sumEl.innerHTML = `<span class="text-slate-500">ป้ายนี้รื้อถอน/ยกเลิกแล้ว</span><span class="font-bold text-slate-600">0 บาท</span>`;
+        } else {
+          sumEl.innerHTML = `
+            <span class="text-slate-600">พื้นที่ <strong>${formatMoney(res.area)}</strong> ตร.ซม. = <strong>${res.units}</strong> หน่วย (×${res.rate} บ.)</span>
+            <span class="font-bold text-emerald-700">
+              ${formatMoney(res.finalTax)} บาท
+              ${res.isMinimumApplied ? '<span class="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[10px]">ขั้นต่ำ 200 บ.</span>' : ''}
+            </span>
+          `;
+        }
+      });
+
+      document.getElementById('modal-active-sign-count').textContent = activeCount;
+      document.getElementById('modal-total-tax').textContent = formatMoney(totalTax);
+    }
+
+    function savePinForm(e) {
+      e.preventDefault();
+      const existingId = document.getElementById('form-pin-id').value;
+      const pinNo = Math.max(1, parseInt(document.getElementById('form-pin-no').value, 10) || getNextPinNumber());
+      const shopName = document.getElementById('form-shop-name').value.trim();
+      const owner = document.getElementById('form-owner').value.trim();
+      const moo = document.getElementById('form-moo').value;
+      const status = document.getElementById('form-status').value;
+      const phone = document.getElementById('form-phone').value.trim();
+      const lat = parseFloat(document.getElementById('form-lat').value);
+      const lng = parseFloat(document.getElementById('form-lng').value);
+      const note = document.getElementById('form-note').value.trim();
+
+      if (!shopName || isNaN(lat) || isNaN(lng)) {
+        showToast('กรุณากรอกชื่อร้านและพิกัดให้ถูกต้อง', 'error');
+        return;
+      }
+
+      const signCards = document.querySelectorAll('.sign-row-card');
+      const signs = Array.from(signCards).map((card, i) => ({
+        id: card.dataset.signId || ('sign-' + Date.now() + '-' + i),
+        name: card.querySelector('.s-name').value.trim() || `ป้ายที่ ${i + 1}`,
+        origin: card.querySelector('.s-origin').value,
+        typeId: card.querySelector('.s-type').value,
+        width: parseFloat(card.querySelector('.s-width').value) || 0,
+        height: parseFloat(card.querySelector('.s-height').value) || 0,
+        quarter: parseFloat(card.querySelector('.s-quarter').value) || 1.0,
+        note: card.querySelector('.s-note').value.trim()
+      }));
+
+      const pinPayload = {
+        id: existingId || ('pin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
+        pinNo,
+        shopName,
+        owner,
+        moo,
+        status,
+        phone,
+        lat: Number(lat.toFixed(6)),
+        lng: Number(lng.toFixed(6)),
+        note,
+        photos: [...modalPhotos],
+        signs
+      };
+
+      if (existingId) {
+        const idx = pins.findIndex(p => p.id === existingId);
+        if (idx !== -1) pins[idx] = pinPayload;
+        showToast(`บันทึกการแก้ไข หมุดที่ ${pinNo} (${shopName}) เรียบร้อย`, 'success');
+      } else {
+        pins.push(pinPayload);
+        showToast(`ปักหมุดที่ ${pinNo} (${shopName}) เรียบร้อยแล้ว`, 'success');
+      }
+
+      savePinsToStorage();
+      renderAll();
+      closePinModal();
+    }
+
+    function toggleDeletePinConfirm(show) {
+      document.getElementById('confirm-delete-pin-box').classList.toggle('hidden', !show);
+      document.getElementById('btn-ask-delete-pin').classList.toggle('hidden', show);
+    }
+
+    function deleteCurrentPin() {
+      const id = document.getElementById('form-pin-id').value;
+      if (!id) return;
+      pins = pins.filter(p => p.id !== id);
+      if (trackingPinId === id) stopTracking();
+      savePinsToStorage();
+      renderAll();
+      closePinModal();
+      showToast('ลบหมุดเรียบร้อยแล้ว (กดปุ่ม "เรียงเลขหมุดใหม่ (1-N)" ได้หากต้องการจัดลำดับใหม่)', 'info');
+    }
+
+    // =========================================================================
+    // 10. ระบบถ่ายรูปจากกล้อง & เลือกรูปจากเครื่อง พร้อมบีบอัดขนาดอัตโนมัติ
+    // =========================================================================
+    function handlePhotoFiles(event) {
+      const files = Array.from(event.target.files || []);
+      if (files.length === 0) return;
+
+      showToast(`กำลังประมวลผลรูปภาพ ${files.length} รูป...`, 'info');
+      let completed = 0;
+
+      files.forEach(file => {
+        compressImageFile(file, 720, 0.65)
+          .then(dataUrl => {
+            if (dataUrl) {
+              modalPhotos.push(dataUrl);
+            }
+          })
+          .catch(() => {
+            showToast('ไม่สามารถอ่านไฟล์รูปภาพบางไฟล์ได้', 'error');
+          })
+          .finally(() => {
+            completed++;
+            if (completed === files.length) {
+              renderModalPhotos();
+              showToast('แนบรูปภาพเรียบร้อยแล้ว', 'success');
+            }
+          });
+      });
+
+      // รีเซ็ตค่า input เพื่อให้ถ่ายรูปซ้ำหรือเลือกรูปเดิมซ้ำได้
+      event.target.value = '';
+    }
+
+    function compressImageFile(file, maxWidth, quality) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const img = new Image();
+          img.onload = () => {
+            let w = img.width;
+            let h = img.height;
+            if (w > maxWidth) {
+              h = Math.round((h * maxWidth) / w);
+              w = maxWidth;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          };
+          img.onerror = reject;
+          img.src = e.target.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderModalPhotos() {
+      const gallery = document.getElementById('modal-photo-gallery');
+      document.getElementById('photo-count-badge').textContent = modalPhotos.length;
+
+      if (modalPhotos.length === 0) {
+        gallery.innerHTML = `<div class="col-span-full text-center py-4 text-xs text-slate-400 border border-dashed border-slate-300 rounded-xl bg-white">ยังไม่มีรูปถ่าย กดปุ่ม "ถ่ายรูปจากกล้อง" หรือ "เลือกรูปจากเครื่อง" ด้านบน</div>`;
+        return;
+      }
+
+      gallery.innerHTML = modalPhotos.map((src, idx) => `
+        <div class="relative group rounded-xl overflow-hidden border border-slate-300 bg-white aspect-[4/3]">
+          <img src="${src}" onclick="openLightbox('${src}')" alt="รูปที่ ${idx + 1}" class="w-full h-full object-cover cursor-zoom-in" />
+          <button type="button" onclick="removeModalPhoto(${idx})" class="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-red-600/90 text-white text-xs font-bold shadow flex items-center justify-center hover:bg-red-700" title="ลบรูปนี้">
+            ✕
+          </button>
+          <span class="absolute bottom-1 left-1.5 px-1.5 py-0.5 rounded bg-black/65 text-white text-[10px]">รูป ${idx + 1}</span>
+        </div>
+      `).join('');
+    }
+
+    function removeModalPhoto(index) {
+      modalPhotos.splice(index, 1);
+      renderModalPhotos();
+    }
+
+    function openLightbox(src) {
+      document.getElementById('lightbox-img').src = src;
+      document.getElementById('lightbox-modal').classList.remove('hidden');
+    }
+
+    function closeLightbox() {
+      document.getElementById('lightbox-modal').classList.add('hidden');
+    }
+
+    // =========================================================================
+    // 11. โมดอลใส่พิกัด / วางลิงก์ Google Maps
+    // =========================================================================
+    function openCoordModal() {
+      const center = getCurrentMapCenter();
+      document.getElementById('paste-maps-input').value = '';
+      document.getElementById('manual-lat').value = center.lat;
+      document.getElementById('manual-lng').value = center.lng;
+      document.getElementById('coord-modal').classList.remove('hidden');
+    }
+
+    function closeCoordModal() {
+      document.getElementById('coord-modal').classList.add('hidden');
+    }
+
+    function parseMapsInput() {
+      const text = document.getElementById('paste-maps-input').value.trim();
+      if (!text) return;
+      // ดึงเลขพิกัดคู่แรกที่พบ เช่น 13.3852, 101.3458 หรือ @13.3852,101.3458
+      const match = text.match(/(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+      if (match) {
+        document.getElementById('manual-lat').value = parseFloat(match[1]);
+        document.getElementById('manual-lng').value = parseFloat(match[2]);
+      }
+    }
+
+    function goToManualCoord(openPinImmediately) {
+      const lat = parseFloat(document.getElementById('manual-lat').value);
+      const lng = parseFloat(document.getElementById('manual-lng').value);
+      if (isNaN(lat) || isNaN(lng)) {
+        showToast('กรุณากรอกค่าละติจูดและลองจิจูดให้ถูกต้อง', 'error');
+        return;
+      }
+      closeCoordModal();
+      if (mapReady && map) {
+        map.setView([lat, lng], 18);
+      } else {
+        fallbackCenter = { lat, lng };
+        updateCenterLabel(lat, lng);
+      }
+      if (openPinImmediately) {
+        openPinModal({ lat, lng });
+      } else {
+        showToast('เลื่อนแผนที่ไปยังพิกัดที่ระบุแล้ว', 'success');
+      }
+    }
+
+    // =========================================================================
+    // 12. ส่งออก / นำเข้าไฟล์ .JSON, .CSV และพิมพ์เอกสาร ภ.ป.1
+    // =========================================================================
+    function exportJSON() {
+      const payload = {
+        app: 'SignboardTaxGIS',
+        version: '3.0',
+        exportedAt: new Date().toISOString(),
+        totalPins: pins.length,
+        pins
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const dateStr = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `สำรองข้อมูลภาษีป้าย_${dateStr}.json`);
+      showToast(`ดาวน์โหลดไฟล์ .JSON (${pins.length} หมุด) เรียบร้อยแล้ว`, 'success');
+    }
+
+    function importJSON(event, mode) {
+      const file = event.target.files && event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          const importedPins = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.pins) ? parsed.pins : null);
+
+          if (!importedPins) {
+            throw new Error('รูปแบบไฟล์ไม่ถูกต้อง');
+          }
+
+          if (mode === 'replace') {
+            pins = importedPins;
+          } else {
+            let nextNo = getNextPinNumber();
+            importedPins.forEach(item => {
+              pins.push({
+                ...item,
+                id: 'pin-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+                pinNo: nextNo++
+              });
+            });
+          }
+
+          ensureSequentialNumbers(false);
+          savePinsToStorage();
+          renderAll();
+
+          if (pins.length > 0 && mapReady && map) {
+            map.setView([pins[0].lat, pins[0].lng], 17);
+          }
+
+          showToast(`นำเข้าข้อมูลสำเร็จทั้งหมด ${pins.length} หมุด`, 'success');
+          switchTab('map');
+        } catch (err) {
+          showToast('ไม่สามารถนำเข้าไฟล์นี้ได้ กรุณาเลือกไฟล์ .JSON ที่ส่งออกจากระบบนี้', 'error');
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function exportCSV() {
+      const headers = [
+        'หมุดที่',
+        'ชื่อร้าน/สถานประกอบการ',
+        'เจ้าของป้าย',
+        'หมู่ที่',
+        'เบอร์โทร',
+        'สถานะการสำรวจ',
+        'ละติจูด',
+        'ลองจิจูด',
+        'ป้ายที่',
+        'ข้อความ/รายละเอียดป้าย',
+        'สถานะป้าย',
+        'ประเภทป้าย',
+        'กว้าง(ซม.)',
+        'ยาว(ซม.)',
+        'พื้นที่(ตร.ซม.)',
+        'จำนวนหน่วย(500ตร.ซม.)',
+        'อัตราภาษี(บาท)',
+        'งวดคิดภาษี',
+        'ภาษีป้ายสุทธิ(บาท)',
+        'หมายเหตุป้ายนี้',
+        'หมายเหตุร้าน'
+      ];
+
+      const rows = [headers.join(',')];
+
+      pins.forEach(p => {
+        (p.signs || []).forEach((s, idx) => {
+          const calc = calculateSignTax(s);
+          const typeObj = SIGN_TYPES.find(t => t.id === s.typeId) || SIGN_TYPES[0];
+          const cols = [
+            p.pinNo,
+            csvSafe(p.shopName),
+            csvSafe(p.owner || ''),
+            csvSafe(p.moo || ''),
+            csvSafe(p.phone || ''),
+            csvSafe(p.status),
+            p.lat,
+            p.lng,
+            idx + 1,
+            csvSafe(s.name),
+            csvSafe(s.origin),
+            csvSafe(typeObj.shortLabel),
+            s.width,
+            s.height,
+            calc.area,
+            calc.units,
+            calc.rate,
+            s.quarter,
+            calc.finalTax,
+            csvSafe(s.note || ''),
+            csvSafe(p.note || '')
+          ];
+          rows.push(cols.join(','));
+        });
+      });
+
+      const csvContent = '\uFEFF' + rows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const dateStr = new Date().toISOString().slice(0, 10);
+      downloadBlob(blob, `ทะเบียนสำรวจภาษีป้าย_${dateStr}.csv`);
+      showToast('ส่งออกไฟล์ Excel (.CSV) เรียบร้อยแล้ว', 'success');
+    }
+
+    function csvSafe(val) {
+      const str = String(val ?? '').replace(/"/g, '""');
+      return `"${str}"`;
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function openPrintSheet(pinId) {
+      const pin = pins.find(p => p.id === pinId);
+      if (!pin) return;
+
+      const totalTax = calculatePinTotalTax(pin);
+      const rowsHtml = (pin.signs || []).map((s, idx) => {
+        const calc = calculateSignTax(s);
+        const typeObj = SIGN_TYPES.find(t => t.id === s.typeId) || SIGN_TYPES[0];
+        return `
+          <tr class="border-b border-slate-300">
+            <td class="py-2 px-2 text-center">${idx + 1}</td>
+            <td class="py-2 px-2">
+              <div class="font-semibold">${escapeHtml(s.name)}</div>
+              <div class="text-[11px] text-slate-600">${escapeHtml(typeObj.shortLabel)} (${escapeHtml(s.origin)})</div>
+              ${s.note ? `<div class="text-[11px] text-slate-700">หมายเหตุ: ${escapeHtml(s.note)}</div>` : ''}
+            </td>
+            <td class="py-2 px-2 text-center font-mono">${s.width} × ${s.height}</td>
+            <td class="py-2 px-2 text-right font-mono">${calc.units}</td>
+            <td class="py-2 px-2 text-right font-mono font-bold">${formatMoney(calc.finalTax)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const photosHtml = (pin.photos && pin.photos.length > 0)
+        ? `<div class="grid grid-cols-2 gap-3 pt-2">
+            ${pin.photos.slice(0, 4).map((src, i) => `
+              <div class="border border-slate-300 rounded-lg p-1.5">
+                <img src="${src}" class="w-full h-36 object-cover rounded" />
+                <div class="text-[10px] text-center text-slate-600 mt-1">ภาพถ่ายป้ายที่ ${i + 1}</div>
+              </div>
+            `).join('')}
+          </div>`
+        : '';
+
+      document.getElementById('print-sheet-content').innerHTML = `
+        <div class="border-b-2 border-slate-900 pb-3 flex items-start justify-between">
+          <div>
+            <h2 class="text-base font-bold">ใบสรุปผลการสำรวจและประเมินภาษีป้ายภาคสนาม (ประกอบแบบ ภ.ป.1)</h2>
+            <p class="text-xs text-slate-600">คำนวณตามกฎกระทรวง กำหนดอัตราภาษีป้าย พ.ศ. 2563</p>
+          </div>
+          <div class="text-right text-xs">
+            <div class="font-bold text-sm">หมุดสำรวจที่ ${pin.pinNo}</div>
+            <div class="font-mono text-[11px]">พิกัด: ${pin.lat}, ${pin.lng}</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div><strong>ชื่อร้าน/สถานประกอบการ:</strong> ${escapeHtml(pin.shopName)}</div>
+          <div><strong>เจ้าของป้าย:</strong> ${escapeHtml(pin.owner || '-')}</div>
+          <div><strong>ที่ตั้ง:</strong> ${escapeHtml(pin.moo || '-')}</div>
+          <div><strong>เบอร์โทรศัพท์:</strong> ${escapeHtml(pin.phone || '-')}</div>
+          <div class="col-span-2"><strong>สถานะการสำรวจ:</strong> ${escapeHtml(pin.status)}</div>
+        </div>
+
+        <table class="w-full text-xs border-collapse border border-slate-300">
+          <thead>
+            <tr class="bg-slate-100 border-b border-slate-300">
+              <th class="py-2 px-2 text-center w-10">ที่</th>
+              <th class="py-2 px-2 text-left">รายการและประเภทป้าย</th>
+              <th class="py-2 px-2 text-center w-24">กว้าง×ยาว (ซม.)</th>
+              <th class="py-2 px-2 text-right w-16">หน่วย</th>
+              <th class="py-2 px-2 text-right w-24">ภาษี (บาท)</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+          <tfoot>
+            <tr class="bg-slate-100 font-bold">
+              <td colspan="4" class="py-2 px-2 text-right">รวมภาษีป้ายทั้งสิ้น</td>
+              <td class="py-2 px-2 text-right font-mono text-sm">${formatMoney(totalTax)} บาท</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        ${pin.note ? `<div class="text-xs"><strong>หมายเหตุเพิ่มเติม:</strong> ${escapeHtml(pin.note)}</div>` : ''}
+        ${photosHtml}
+
+        <div class="grid grid-cols-2 gap-8 pt-8 text-xs text-center">
+          <div>
+            <div>ลงชื่อ ...................................................... ผู้สำรวจ/เจ้าหน้าที่</div>
+            <div class="mt-1">( ...................................................... )</div>
+          </div>
+          <div>
+            <div>ลงชื่อ ...................................................... เจ้าของป้าย/ผู้รับทราบ</div>
+            <div class="mt-1">( ...................................................... )</div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('print-sheet-modal').classList.remove('hidden');
+    }
+
+    function closePrintSheet() {
+      document.getElementById('print-sheet-modal').classList.add('hidden');
+    }
+
+    // =========================================================================
+    // 13. จัดการข้อมูลตัวอย่าง และสลับแท็บหน้าจอ
+    // =========================================================================
+    function askClearAllData() {
+      document.getElementById('confirm-clear-box').classList.remove('hidden');
+    }
+
+    function cancelClearAllData() {
+      document.getElementById('confirm-clear-box').classList.add('hidden');
+    }
+
+    function confirmClearAllData() {
+      pins = [];
+      stopTracking();
+      savePinsToStorage();
+      renderAll();
+      cancelClearAllData();
+      showToast('ล้างข้อมูลทั้งหมดเรียบร้อย พร้อมเริ่มปักหมุดงานจริงจากหมุดที่ 1', 'success');
+    }
+
+    function restoreSampleData() {
+      pins = getDefaultSamplePins();
+      savePinsToStorage();
+      renderAll();
+      if (mapReady && map) {
+        map.setView(DEFAULT_CENTER, 17);
+      }
+      showToast('โหลดข้อมูลตัวอย่าง 4 หมุดเรียบร้อยแล้ว', 'success');
+    }
+
+    function switchTab(tabName) {
+      const tabs = ['map', 'list', 'summary', 'transfer'];
+      tabs.forEach(t => {
+        const view = document.getElementById(`view-${t}`);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tabName) {
+          view.classList.remove('hidden');
+          btn.className = 'tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-semibold bg-amber-500 text-slate-950 transition';
+        } else {
+          view.classList.add('hidden');
+          btn.className = 'tab-btn flex-1 sm:flex-initial px-3 py-2 rounded-lg text-xs sm:text-sm font-medium text-slate-200 hover:bg-slate-700 transition';
+        }
+      });
+
+      if (tabName === 'map' && mapReady && map) {
+        setTimeout(() => map.invalidateSize(), 120);
+      }
+    }
+
+    // =========================================================================
+    // 14. ฟังก์ชันช่วยเหลือ (ตัวเลขอารบิก, แจ้งเตือน Toast, ป้องกัน XSS)
+    // =========================================================================
+    function formatMoney(num) {
+      return Number(num || 0).toLocaleString('en-US', {
+        minimumFractionDigits: Number.isInteger(Number(num)) ? 0 : 2,
+        maximumFractionDigits: 2
+      });
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-700 text-white border-emerald-400',
+        error: 'bg-red-700 text-white border-red-400',
+        info: 'bg-slate-900 text-white border-amber-400'
+      };
+      el.className = `pointer-events-auto px-4 py-3 rounded-2xl shadow-xl border-l-4 text-xs sm:text-sm font-medium transition-all duration-300 ${colors[type] || colors.info}`;
+      el.textContent = message;
+      container.appendChild(el);
+
+      setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(-6px)';
+        setTimeout(() => el.remove(), 300);
+      }, 3600);
+    }
+  </script>
+</body>
+</html>
